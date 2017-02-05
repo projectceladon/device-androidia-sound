@@ -16,6 +16,8 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
+#Preffered paths for all vendor hals /vendor/lib/hw
+LOCAL_PROPRIETARY_MODULE := true
 LOCAL_MODULE := audio.primary.$(TARGET_BOARD_PLATFORM)
 LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_SRC_FILES := \
