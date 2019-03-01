@@ -1038,7 +1038,7 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->hw_device.dump = adev_dump;
     adev->hw_device.get_microphones = adev_get_microphones;
 
-    sprintf(mixer_path, "/system/etc/mixer_paths_%d.xml", card);
+    sprintf(mixer_path, "/vendor/etc/mixer_paths_%d.xml", card);
     adev->ar = audio_route_init(card, mixer_path);
     if (!adev->ar) {
         ALOGE("%s: Failed to init audio route controls for card %d, aborting.",
