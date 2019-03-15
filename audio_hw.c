@@ -377,6 +377,10 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     struct str_parms *reply = str_parms_create();
     int ret;
 
+    if(reply == NULL) {
+        return NULL;
+    }
+
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_FORMATS, "AUDIO_FORMAT_PCM_16_BIT");
@@ -627,6 +631,10 @@ static char * in_get_parameters(const struct audio_stream *stream,
     struct str_parms *reply = str_parms_create();
     int ret;
 
+    if(reply == NULL) {
+        return NULL;
+    }
+
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_FORMATS, "AUDIO_FORMAT_PCM_16_BIT");
@@ -816,6 +824,10 @@ static char * adev_get_parameters(const struct audio_hw_device *dev __unused,
     struct str_parms *query = str_parms_create_str(keys);
     char value[256];
     int ret;
+
+    if(query == NULL) {
+        return NULL;
+    }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_HW_AV_SYNC, value, sizeof(value));
     if (ret >= 0) {
