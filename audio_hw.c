@@ -373,27 +373,40 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     struct stream_out *out = (struct stream_out *)stream;
     struct str_parms *query = str_parms_create_str(keys);
     char *str = NULL;
+    char *str_parm = NULL;
     char value[256];
     struct str_parms *reply = str_parms_create();
     int ret;
 
+    if(reply == NULL)
+        return NULL;
+
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_FORMATS, "AUDIO_FORMAT_PCM_16_BIT");
-        str = strdup(str_parms_to_str(reply));
+        str_parm = str_parms_to_str(reply);
+        if(str_parm == NULL)
+            return NULL;
+        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, out->req_config.sample_rate);
-        str = strdup(str_parms_to_str(reply));
+        str_parm = str_parms_to_str(reply);
+        if(str_parm == NULL)
+            return NULL;
+        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_CHANNELS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_CHANNELS,
             (out->req_config.channel_mask == AUDIO_CHANNEL_OUT_MONO ? "AUDIO_CHANNEL_OUT_MONO" : "AUDIO_CHANNEL_OUT_STEREO"));
-        str = strdup(str_parms_to_str(reply));
+        str_parm = str_parms_to_str(reply);
+        if(str_parm == NULL)
+            return NULL;
+        str = strdup(str_parm);
     }
 
     str_parms_destroy(query);
@@ -623,27 +636,40 @@ static char * in_get_parameters(const struct audio_stream *stream,
     struct stream_in *in = (struct stream_in *)stream;
     struct str_parms *query = str_parms_create_str(keys);
     char *str = NULL;
+    char *str_parm = NULL;
     char value[256];
     struct str_parms *reply = str_parms_create();
     int ret;
 
+    if(reply == NULL)
+        return NULL;
+
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_FORMATS, "AUDIO_FORMAT_PCM_16_BIT");
-        str = strdup(str_parms_to_str(reply));
+        str_parm = str_parms_to_str(reply);
+        if(str_parm == NULL)
+            return NULL;
+        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, in->req_config.sample_rate);
-        str = strdup(str_parms_to_str(reply));
+        str_parm = str_parms_to_str(reply);
+        if(str_parm == NULL)
+            return NULL;
+        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_CHANNELS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_CHANNELS,
             (in->req_config.channel_mask == AUDIO_CHANNEL_IN_MONO ? "AUDIO_CHANNEL_IN_MONO" : "AUDIO_CHANNEL_IN_STEREO"));
-        str = strdup(str_parms_to_str(reply));
+        str_parm = str_parms_to_str(reply);
+        if(str_parm == NULL)
+            return NULL;
+        str = strdup(str_parm);
     }
 
     str_parms_destroy(query);
@@ -816,6 +842,10 @@ static char * adev_get_parameters(const struct audio_hw_device *dev __unused,
     struct str_parms *query = str_parms_create_str(keys);
     char value[256];
     int ret;
+
+    if(query == NULL) {
+        return NULL;
+    }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_HW_AV_SYNC, value, sizeof(value));
     if (ret >= 0) {
