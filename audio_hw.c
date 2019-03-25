@@ -54,6 +54,8 @@
 #define IN_PERIOD_COUNT 2
 #define IN_SAMPLING_RATE 48000
 
+#define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
+
 struct pcm_config pcm_config_out = {
     .channels = 2,
     .rate = OUT_SAMPLING_RATE,
@@ -86,6 +88,8 @@ struct audio_device {
     int card;
     struct stream_out *active_out;
     struct stream_in *active_in;
+
+    int is_bt_call_active;
 };
 
 struct stream_out {
@@ -450,7 +454,11 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&out->lock);
     if (out->standby) {
-        ret = start_output_stream(out);
+        if(adev->is_bt_call_active == 0) {
+            ret = start_output_stream(out);
+        } else {
+            ret = -1;
+        }
         if (ret != 0) {
             pthread_mutex_unlock(&adev->lock);
             goto exit;
@@ -701,7 +709,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&in->lock);
     if (in->standby) {
-        ret = start_input_stream(in);
+        if(adev->is_bt_call_active == 0) {
+            ret = start_input_stream(in);
+        } else {
+            ret = -1;
+        }
         if (ret == 0)
             in->standby = 0;
     }
@@ -829,9 +841,45 @@ static void adev_close_output_stream(struct audio_hw_device *dev __unused,
     free(stream);
 }
 
-static int adev_set_parameters(struct audio_hw_device *dev __unused, const char *kvpairs __unused)
+static void stop_existing_output_input(struct audio_device *adev){
+    ALOGV("%s during call scenario", __func__);
+
+    if(adev->active_out != NULL) {
+        ALOGV("%s closing active_out", __func__);
+        do_out_standby(adev->active_out);
+    }
+
+    if(adev->active_in != NULL) {
+        ALOGV("%s closing active_in", __func__);
+        do_in_standby(adev->active_in);
+    }
+}
+
+static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
 {
-    ALOGV("adev_set_parameters");
+    ALOGD("%s : kvpairs: %s", __func__, kvpairs);
+
+    struct audio_device * adev = (struct audio_device *)dev;
+    char value[32];
+    int ret, val = 0;
+    struct str_parms *parms;
+
+    parms = str_parms_create_str(kvpairs);
+
+    if(parms == NULL) {
+        return NULL;
+    }
+
+    ret = str_parms_get_str(parms, AUDIO_PARAMETER_HFP_ENABLE, value, sizeof(value));
+    if (ret >= 0) {
+        if (strcmp(value, "true") == 0){
+            stop_existing_output_input(adev);
+            adev->is_bt_call_active = 1;
+        } else {
+            adev->is_bt_call_active = 0;
+        }
+    }
+
     return 0;
 }
 
