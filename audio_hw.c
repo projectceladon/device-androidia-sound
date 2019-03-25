@@ -54,6 +54,8 @@
 #define IN_PERIOD_COUNT 2
 #define IN_SAMPLING_RATE 48000
 
+#define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
+
 struct pcm_config pcm_config_out = {
     .channels = 2,
     .rate = OUT_SAMPLING_RATE,
@@ -86,6 +88,8 @@ struct audio_device {
     int card;
     struct stream_out *active_out;
     struct stream_in *active_in;
+
+    int is_bt_call_active;
 };
 
 struct stream_out {
@@ -372,31 +376,24 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     ALOGV("%s : keys : %s",__func__,keys);
     struct stream_out *out = (struct stream_out *)stream;
     struct str_parms *query = str_parms_create_str(keys);
-    char *str = NULL;
     char *str_parm = NULL;
     char value[256];
     struct str_parms *reply = str_parms_create();
     int ret;
 
-    if(reply == NULL)
+    if(reply == NULL || query == NULL)
         return NULL;
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_FORMATS, "AUDIO_FORMAT_PCM_16_BIT");
         str_parm = str_parms_to_str(reply);
-        if(str_parm == NULL)
-            return NULL;
-        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, out->req_config.sample_rate);
         str_parm = str_parms_to_str(reply);
-        if(str_parm == NULL)
-            return NULL;
-        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_CHANNELS, value, sizeof(value));
@@ -404,16 +401,13 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_CHANNELS,
             (out->req_config.channel_mask == AUDIO_CHANNEL_OUT_MONO ? "AUDIO_CHANNEL_OUT_MONO" : "AUDIO_CHANNEL_OUT_STEREO"));
         str_parm = str_parms_to_str(reply);
-        if(str_parm == NULL)
-            return NULL;
-        str = strdup(str_parm);
     }
 
     str_parms_destroy(query);
     str_parms_destroy(reply);
 
-    ALOGV("%s : returning keyValuePair %s",__func__, str);
-    return str;
+    ALOGV("%s : returning keyValuePair %s",__func__, str_parm);
+    return str_parm;
 }
 
 static uint32_t out_get_latency(const struct audio_stream_out *stream __unused)
@@ -450,7 +444,11 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&out->lock);
     if (out->standby) {
-        ret = start_output_stream(out);
+        if(adev->is_bt_call_active == 0) {
+            ret = start_output_stream(out);
+        } else {
+            ret = -1;
+        }
         if (ret != 0) {
             pthread_mutex_unlock(&adev->lock);
             goto exit;
@@ -635,31 +633,24 @@ static char * in_get_parameters(const struct audio_stream *stream,
     ALOGV("%s : keys : %s",__func__,keys);
     struct stream_in *in = (struct stream_in *)stream;
     struct str_parms *query = str_parms_create_str(keys);
-    char *str = NULL;
     char *str_parm = NULL;
     char value[256];
     struct str_parms *reply = str_parms_create();
     int ret;
 
-    if(reply == NULL)
+    if(reply == NULL || query == NULL)
         return NULL;
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_FORMATS, "AUDIO_FORMAT_PCM_16_BIT");
         str_parm = str_parms_to_str(reply);
-        if(str_parm == NULL)
-            return NULL;
-        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, in->req_config.sample_rate);
         str_parm = str_parms_to_str(reply);
-        if(str_parm == NULL)
-            return NULL;
-        str = strdup(str_parm);
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_CHANNELS, value, sizeof(value));
@@ -667,16 +658,13 @@ static char * in_get_parameters(const struct audio_stream *stream,
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_CHANNELS,
             (in->req_config.channel_mask == AUDIO_CHANNEL_IN_MONO ? "AUDIO_CHANNEL_IN_MONO" : "AUDIO_CHANNEL_IN_STEREO"));
         str_parm = str_parms_to_str(reply);
-        if(str_parm == NULL)
-            return NULL;
-        str = strdup(str_parm);
     }
 
     str_parms_destroy(query);
     str_parms_destroy(reply);
 
-    ALOGV("%s : returning keyValuePair %s",__func__, str);
-    return str;
+    ALOGV("%s : returning keyValuePair %s",__func__, str_parm);
+    return str_parm;
 }
 
 static int in_set_gain(struct audio_stream_in *stream __unused, float gain __unused)
@@ -701,7 +689,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&in->lock);
     if (in->standby) {
-        ret = start_input_stream(in);
+        if(adev->is_bt_call_active == 0) {
+            ret = start_input_stream(in);
+        } else {
+            ret = -1;
+        }
         if (ret == 0)
             in->standby = 0;
     }
@@ -829,9 +821,45 @@ static void adev_close_output_stream(struct audio_hw_device *dev __unused,
     free(stream);
 }
 
-static int adev_set_parameters(struct audio_hw_device *dev __unused, const char *kvpairs __unused)
+static void stop_existing_output_input(struct audio_device *adev){
+    ALOGV("%s during call scenario", __func__);
+
+    if(adev->active_out != NULL) {
+        ALOGV("%s closing active_out", __func__);
+        do_out_standby(adev->active_out);
+    }
+
+    if(adev->active_in != NULL) {
+        ALOGV("%s closing active_in", __func__);
+        do_in_standby(adev->active_in);
+    }
+}
+
+static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
 {
-    ALOGV("adev_set_parameters");
+    ALOGD("%s : kvpairs: %s", __func__, kvpairs);
+
+    struct audio_device * adev = (struct audio_device *)dev;
+    char value[32];
+    int ret;
+    struct str_parms *parms;
+
+    parms = str_parms_create_str(kvpairs);
+
+    if(parms == NULL) {
+        return 0;
+    }
+
+    ret = str_parms_get_str(parms, AUDIO_PARAMETER_HFP_ENABLE, value, sizeof(value));
+    if (ret >= 0) {
+        if (strcmp(value, "true") == 0){
+            stop_existing_output_input(adev);
+            adev->is_bt_call_active = 1;
+        } else {
+            adev->is_bt_call_active = 0;
+        }
+    }
+
     return 0;
 }
 
