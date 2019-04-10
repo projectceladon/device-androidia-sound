@@ -86,6 +86,7 @@ struct audio_device {
     struct audio_route *ar;
     
     int card;
+    int cardc;
     struct stream_out *active_out;
     struct stream_in *active_in;
 
@@ -223,7 +224,7 @@ static int start_output_stream(struct stream_out *out)
         adev->card = get_pcm_card("Dummy");
     }
 
-    ALOGE("PCM card selected = %d, \n", adev->card);
+    ALOGI("PCM playback card selected = %d, \n", adev->card);
  
     out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
 
@@ -250,10 +251,22 @@ static int start_input_stream(struct stream_in *in)
 {
     struct audio_device *adev = in->dev;
 
+    int ret;
+
+    ret = system("ls /proc/asound/card0/pcm0c");
+
+    if(!ret) {
+       adev->cardc = PCM_CARD_DEFAULT;
+    } else {
+        adev->cardc = get_pcm_card("Dummy");
+    }
+
+    ALOGE("PCM record card selected = %d, \n", adev->card);
+    
     ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
         in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
 
-    in->pcm = pcm_open(PCM_CARD, PCM_DEVICE, PCM_IN, in->pcm_config);
+    in->pcm = pcm_open(adev->cardc, PCM_DEVICE, PCM_IN, in->pcm_config);
     if (!in->pcm) {
         return -ENODEV;
     } else if (!pcm_is_ready(in->pcm)) {
@@ -765,7 +778,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         adev->card = get_pcm_card("Dummy");
     }
 
-    ALOGE("PCM card selected = %d, \n", adev->card);
+    ALOGI("PCM playback card selected = %d, \n", adev->card);
 
     params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
 
