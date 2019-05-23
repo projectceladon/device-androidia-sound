@@ -39,6 +39,7 @@
 #include <sound/asound.h>
 #include <tinyalsa/asoundlib.h>
 
+#include <audio_utils/channels.h>
 #include <audio_utils/resampler.h>
 #include <audio_route/audio_route.h>
 
@@ -46,15 +47,32 @@
 #define PCM_CARD_DEFAULT 0
 #define PCM_DEVICE 0
 
-#define OUT_PERIOD_SIZE 512
+#define OUT_PERIOD_SIZE 480
 #define OUT_PERIOD_COUNT 2
 #define OUT_SAMPLING_RATE 48000
 
-#define IN_PERIOD_SIZE 512
+#define IN_PERIOD_SIZE 480
 #define IN_PERIOD_COUNT 2
 #define IN_SAMPLING_RATE 48000
 
 #define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
+#define AUDIO_PARAMETER_BT_SCO       "BT_SCO"
+#define AUDIO_BT_DRIVER_NAME         "btaudiosource"
+#define SAMPLE_SIZE_IN_BYTES          2
+
+//#define DEBUG_PCM_DUMP
+
+#ifdef DEBUG_PCM_DUMP
+// To enable dumps, explicitly create "/vendor/dump/" folder and reboot device
+FILE *sco_call_write = NULL;
+FILE *sco_call_write_remapped = NULL;
+FILE *sco_call_write_bt = NULL;
+FILE *sco_call_read = NULL;
+FILE *sco_call_read_remapped = NULL;
+FILE *sco_call_read_bt = NULL;
+FILE *out_write_dump = NULL;
+FILE *in_read_dump = NULL;
+#endif
 
 struct pcm_config pcm_config_out = {
     .channels = 2,
@@ -75,6 +93,31 @@ struct pcm_config pcm_config_in = {
     .stop_threshold = (IN_PERIOD_SIZE * IN_PERIOD_COUNT),
 };
 
+//[ BT ALSA Card config
+struct pcm_config bt_out_config = {
+    .channels = 1,
+    .rate = 8000,
+    .period_size = 80,
+    .period_count = 50,
+    .start_threshold = 0,
+    .stop_threshold = 0,
+    .silence_threshold = 0,
+    .silence_size = 0,
+    .avail_min = 0
+};
+
+struct pcm_config bt_in_config = {
+    .channels = 1,
+    .rate = 8000,
+    .period_size = 80,
+    .period_count = 50,
+    .start_threshold = 0,
+    .stop_threshold = 0,
+    .silence_threshold = 0,
+    .silence_size = 0,
+    .avail_min = 0
+};
+
 struct audio_device {
     struct audio_hw_device hw_device;
 
@@ -90,7 +133,16 @@ struct audio_device {
     struct stream_out *active_out;
     struct stream_in *active_in;
 
-    int is_bt_call_active;
+//[BT-HFP Voice Call
+    bool is_hfp_call_active;
+//BT-HFP Voice Call]
+
+//[BT SCO VoIP Call
+    bool in_sco_voip_call;
+    int bt_card;
+    struct resampler_itfe *voip_in_resampler;
+    struct resampler_itfe *voip_out_resampler;
+//BT SCO VoIP Call]
 };
 
 struct stream_out {
@@ -161,7 +213,6 @@ static void select_devices(struct audio_device *adev)
 static void do_out_standby(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
-
     if (!out->standby) {
         pcm_close(out->pcm);
         out->pcm = NULL;
@@ -174,7 +225,6 @@ static void do_out_standby(struct stream_out *out)
 static void do_in_standby(struct stream_in *in)
 {
     struct audio_device *adev = in->dev;
-
     if (!in->standby) {
         pcm_close(in->pcm);
         in->pcm = NULL;
@@ -203,6 +253,15 @@ static int get_pcm_card(const char* name)
         return atoi(number_filepath + 4);
 }
 
+void update_bt_card(struct audio_device *adev){
+    adev->bt_card = get_pcm_card(AUDIO_BT_DRIVER_NAME); //update driver name if changed from BT side.
+}
+
+static unsigned int round_to_16_mult(unsigned int size)
+{
+    return (size + 15) & ~15;   /* 0xFFFFFFF0; */
+}
+
 /* must be called with hw device and output stream mutexes locked */
 static int start_output_stream(struct stream_out *out)
 {
@@ -210,7 +269,7 @@ static int start_output_stream(struct stream_out *out)
     int ret;
 
     ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
-        out->pcm_config->rate, out->pcm_config->format, out->pcm_config->channels);
+            out->pcm_config->rate, out->pcm_config->format, out->pcm_config->channels);
 
     if (out->unavailable) {
         ALOGV("start_output_stream: output not available");
@@ -219,14 +278,24 @@ static int start_output_stream(struct stream_out *out)
 
     ret = system("ls /proc/asound/card0/pcm0p");
     if(!ret) {
-       adev->card = PCM_CARD_DEFAULT;
+        adev->card = PCM_CARD_DEFAULT;
     } else {
         adev->card = get_pcm_card("Dummy");
     }
 
-    ALOGI("PCM playback card selected = %d, \n", adev->card);
- 
-    out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
+//[BT SCO VoIP Call
+    if(adev->in_sco_voip_call) {
+        ALOGD("%s : sco voip call active", __func__);
+
+        ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]", __func__, adev->bt_card, PCM_DEVICE,
+                bt_out_config.rate, bt_out_config.format, bt_out_config.channels);
+
+        out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
+//BT SCO VoIP Call]
+    } else {
+        ALOGI("PCM playback card selected = %d, \n", adev->card);
+        out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
+    }
 
     if (!out->pcm) {
         ALOGE("pcm_open(out) failed: device not found");
@@ -261,12 +330,24 @@ static int start_input_stream(struct stream_in *in)
         adev->cardc = get_pcm_card("Dummy");
     }
 
-    ALOGE("PCM record card selected = %d, \n", adev->card);
-    
-    ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
-        in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
+//[BT SCO VoIP Call
+    if(adev->in_sco_voip_call) {
+        ALOGD("%s : sco voip call active", __func__);
 
-    in->pcm = pcm_open(adev->cardc, PCM_DEVICE, PCM_IN, in->pcm_config);
+        ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]",__func__, adev->bt_card, PCM_DEVICE,
+                bt_in_config.rate, bt_in_config.format, bt_in_config.channels);
+
+        in->pcm = pcm_open(adev->bt_card, PCM_DEVICE, PCM_IN, &bt_in_config);
+//BT SCO VoIP Call]
+    } else {
+        ALOGI("PCM record card selected = %d, \n", adev->card);
+
+        ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
+            in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
+
+        in->pcm = pcm_open(adev->cardc, PCM_DEVICE, PCM_IN, in->pcm_config);
+    }
+
     if (!in->pcm) {
         return -ENODEV;
     } else if (!pcm_is_ready(in->pcm)) {
@@ -457,7 +538,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&out->lock);
     if (out->standby) {
-        if(adev->is_bt_call_active == 0) {
+        if(!adev->is_hfp_call_active) {
             ret = start_output_stream(out);
         } else {
             ret = -1;
@@ -470,12 +551,108 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     }
     pthread_mutex_unlock(&adev->lock);
 
-    ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
-    if (ret == -EPIPE) {
-        /* In case of underrun, don't sleep since we want to catch up asap */
-        pthread_mutex_unlock(&out->lock);
-        return ret;
+//[BT SCO VoIP Call
+    if(adev->in_sco_voip_call) {
+        /* VoIP pcm write in celadon devices goes to bt alsa card */
+        size_t frames_in = round_to_16_mult(out->pcm_config->period_size);
+        size_t frames_out = round_to_16_mult(bt_out_config.period_size);
+        size_t buf_size_out = bt_out_config.channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_in = out->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_remapped = bt_out_config.channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        int16_t *buf_out = (int16_t *) malloc (buf_size_out);
+        int16_t *buf_in = (int16_t *) malloc (buf_size_in);
+        int16_t *buf_remapped = (int16_t *) malloc (buf_size_remapped);
+
+        if(adev->voip_out_resampler == NULL) {
+            int ret = create_resampler(out->pcm_config->rate /*src rate*/, bt_out_config.rate /*dst rate*/, bt_out_config.channels/*dst channels*/,
+                            RESAMPLER_QUALITY_DEFAULT, NULL, &(adev->voip_out_resampler));
+            ALOGD("%s : frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+            ALOGD("%s : to write bytes : %zu", __func__, bytes);
+            ALOGD("%s : size_in %zu size_out %zu size_remapped %zu", __func__, buf_size_in, buf_size_out, buf_size_remapped);
+
+            if (ret != 0) {
+                adev->voip_out_resampler = NULL;
+                ALOGE("%s : Failure to create resampler %d", __func__, ret);
+
+                free(buf_in);
+                free(buf_out);
+                free(buf_remapped);
+                goto exit;
+            } else {
+                ALOGD("%s : voip_out_resampler created rate : [%d -> %d]", __func__, out->pcm_config->rate, bt_out_config.rate);
+            }
+        }
+
+        memset(buf_in, 0, buf_size_in);
+        memset(buf_remapped, 0, buf_size_remapped);
+        memset(buf_out, 0, buf_size_out);
+
+        memcpy(buf_in, buffer, buf_size_in);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_write != NULL) {
+            fwrite(buf_in, 1, buf_size_in, sco_call_write);
+        } else {
+            ALOGD("%s : sco_call_write was NULL, no dump", __func__);
+        }
+#endif
+
+        adjust_channels(buf_in, out->pcm_config->channels, buf_remapped, bt_out_config.channels, 
+                                        SAMPLE_SIZE_IN_BYTES, buf_size_in);
+
+        //ALOGV("remapping : [%d -> %d]", out->pcm_config->channels, bt_out_config.channels);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_write_remapped != NULL) {
+            fwrite(buf_remapped, 1, buf_size_remapped, sco_call_write_remapped);
+        } else {
+            ALOGD("%s : sco_call_read_remapped was NULL, no dump", __func__);
+        }
+#endif
+
+        if(adev->voip_out_resampler != NULL) {
+            adev->voip_out_resampler->resample_from_input(adev->voip_out_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
+            //ALOGV("%s : upsampling [%d -> %d]",__func__, out->pcm_config->rate, bt_out_config.rate);
+        }
+
+        ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+
+        buf_size_out = bt_out_config.channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        bytes = out->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_write_bt != NULL) {
+            fwrite(buf_out, 1, buf_size_out, sco_call_write_bt);
+        } else {
+            ALOGD("%s : sco_call_write was NULL, no dump", __func__);
+        }
+#endif
+
+        ret = pcm_write(out->pcm, buf_out, buf_size_out);
+
+        free(buf_in);
+        free(buf_out);
+        free(buf_remapped);
+//BT SCO VoIP Call]
+    } else {
+        /* Normal pcm out to primary card */
+        ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
+
+#ifdef DEBUG_PCM_DUMP
+        if(out_write_dump != NULL) {
+            fwrite(out_buffer, 1, out_frames * frame_size, out_write_dump);
+        } else {
+            ALOGD("%s : out_write_dump was NULL, no dump", __func__);
+        }
+#endif
+
+        if (ret == -EPIPE) {
+            /* In case of underrun, don't sleep since we want to catch up asap */
+            pthread_mutex_unlock(&out->lock);
+            return ret;
+        }
     }
+
     if (ret == 0) {
         out->written += out_frames;
     }
@@ -691,7 +868,8 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
     int ret = 0;
     struct stream_in *in = (struct stream_in *)stream;
     struct audio_device *adev = in->dev;
-    size_t frames_rq = bytes / audio_stream_in_frame_size(stream);
+
+    ALOGV("%s : bytes_requested : %zu", __func__, bytes);
 
     /*
      * acquiring hw device mutex systematically is useful if a low
@@ -702,7 +880,7 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&in->lock);
     if (in->standby) {
-        if(adev->is_bt_call_active == 0) {
+        if(!adev->is_hfp_call_active) {
             ret = start_input_stream(in);
         } else {
             ret = -1;
@@ -715,7 +893,99 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
     if (ret < 0)
         goto exit;
 
-    ret = pcm_read(in->pcm, buffer, bytes);
+//[BT SCO VoIP Call
+    if(adev->in_sco_voip_call) {
+        /* VoIP pcm read from bt alsa card */
+        size_t frames_out = round_to_16_mult(in->pcm_config->period_size);
+        size_t frames_in = round_to_16_mult(bt_in_config.period_size);
+        size_t buf_size_out = in->pcm_config->channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_in = bt_in_config.channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_remapped = in->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        int16_t *buf_out = (int16_t *) malloc (buf_size_out);
+        int16_t *buf_in = (int16_t *) malloc (buf_size_in);
+        int16_t *buf_remapped = (int16_t *) malloc (buf_size_remapped);
+
+        if(adev->voip_in_resampler == NULL) {
+            int ret = create_resampler(bt_in_config.rate /*src rate*/, in->pcm_config->rate /*dst rate*/, in->pcm_config->channels/*dst channels*/,
+                        RESAMPLER_QUALITY_DEFAULT, NULL, &(adev->voip_in_resampler));
+            ALOGV("%s : bytes_requested : %zu", __func__, bytes);
+            ALOGV("%s : frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+            ALOGD("%s : size_in %zu size_out %zu size_remapped %zu", __func__, buf_size_in, buf_size_out, buf_size_remapped);
+            if (ret != 0) {
+                adev->voip_in_resampler = NULL;
+                ALOGE("%s : Failure to create resampler %d", __func__, ret);
+
+                free(buf_in);
+                free(buf_out);
+                free(buf_remapped);
+                goto exit;
+            } else {
+                ALOGD("%s : voip_in_resampler created rate : [%d -> %d]", __func__, bt_in_config.rate, in->pcm_config->rate);
+            }
+        }
+
+        memset(buf_in, 0, buf_size_in);
+        memset(buf_remapped, 0, buf_size_remapped);
+        memset(buf_out, 0, buf_size_out);
+
+        ret = pcm_read(in->pcm, buf_in, buf_size_in);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_read != NULL) {
+            fwrite(buf_in, 1, buf_size_in, sco_call_read);
+        } else {
+            ALOGD("%s : sco_call_read was NULL, no dump", __func__);
+        }
+#endif
+        adjust_channels(buf_in, bt_in_config.channels, buf_remapped, in->pcm_config->channels, 
+                                        SAMPLE_SIZE_IN_BYTES, buf_size_in);
+
+        //ALOGV("%s : remapping : [%d -> %d]", __func__, bt_in_config.channels, in->pcm_config->channels);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_read_remapped != NULL) {
+            fwrite(buf_remapped, 1, buf_size_remapped, sco_call_read_remapped);
+        } else {
+            ALOGD("%s : sco_call_read_remapped was NULL, no dump", __func__);
+        }
+#endif
+
+        if(adev->voip_in_resampler != NULL) {
+            adev->voip_in_resampler->resample_from_input(adev->voip_in_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
+            //ALOGV("%s : upsampling [%d -> %d]",__func__, bt_in_config.rate, in->pcm_config->rate);
+        }
+
+        ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+
+        buf_size_out = in->pcm_config->channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        bytes = buf_size_out;
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_read_bt != NULL) {
+            fwrite(buf_out, 1, buf_size_out, sco_call_read_bt);
+        } else {
+            ALOGD("%s : sco_call_read_bt was NULL, no dump", __func__);
+        }
+#endif
+
+        memcpy(buffer, buf_out, buf_size_out);
+
+        free(buf_in);
+        free(buf_out);
+        free(buf_remapped);
+//BT SCO VoIP Call]
+    } else {
+        /* pcm read for primary card */
+        ret = pcm_read(in->pcm, buffer, bytes);
+
+#ifdef DEBUG_PCM_DUMP
+        if(in_read_dump != NULL) {
+            fwrite(buffer, 1, bytes, in_read_dump);
+        } else {
+            ALOGD("%s : in_read_dump was NULL, no dump", __func__);
+        }
+#endif
+    }
     if (ret > 0)
         ret = 0;
 
@@ -756,13 +1026,13 @@ static int in_remove_audio_effect(const struct audio_stream *stream __unused,
 static int adev_open_output_stream(struct audio_hw_device *dev,
                                    audio_io_handle_t handle __unused,
                                    audio_devices_t devices __unused,
-                                   audio_output_flags_t flags __unused,
+                                   audio_output_flags_t flags,
                                    struct audio_config *config,
                                    struct audio_stream_out **stream_out,
                                    const char *address __unused)
 {
-    ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
-        config->sample_rate, config->format, popcount(config->channel_mask));
+    ALOGD("%s : requested config : [rate %d format %d channels %d flags %#x]",__func__,
+        config->sample_rate, config->format, popcount(config->channel_mask), flags);
 
     struct audio_device *adev = (struct audio_device *)dev;
     struct stream_out *out;
@@ -809,6 +1079,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->stream.get_presentation_position = out_get_presentation_position;
 
     out->pcm_config = &pcm_config_out;
+
     out->written = 0;
 
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
@@ -834,17 +1105,24 @@ static void adev_close_output_stream(struct audio_hw_device *dev __unused,
     free(stream);
 }
 
+//called with adev lock
 static void stop_existing_output_input(struct audio_device *adev){
     ALOGV("%s during call scenario", __func__);
 
     if(adev->active_out != NULL) {
+        struct stream_out *out = &adev->active_out;
+        pthread_mutex_lock(&out->lock);
         ALOGV("%s closing active_out", __func__);
         do_out_standby(adev->active_out);
+        pthread_mutex_unlock(&out->lock);
     }
 
     if(adev->active_in != NULL) {
+        struct stream_out *in = &adev->active_in;
+        pthread_mutex_lock(&in->lock);
         ALOGV("%s closing active_in", __func__);
         do_in_standby(adev->active_in);
+        pthread_mutex_unlock(&in->lock);
     }
 }
 
@@ -865,13 +1143,35 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
 
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_HFP_ENABLE, value, sizeof(value));
     if (ret >= 0) {
+        pthread_mutex_lock(&adev->lock);
         if (strcmp(value, "true") == 0){
             stop_existing_output_input(adev);
-            adev->is_bt_call_active = 1;
+            adev->is_hfp_call_active = true;
         } else {
-            adev->is_bt_call_active = 0;
+            adev->is_hfp_call_active = false;
         }
+        pthread_mutex_unlock(&adev->lock);
     }
+
+//[BT SCO VoIP Call
+    ret = str_parms_get_str(parms, AUDIO_PARAMETER_BT_SCO, value, sizeof(value));
+    if (ret >= 0) {
+        pthread_mutex_lock(&adev->lock);
+        if (strcmp(value, "on") == 0){
+            adev->in_sco_voip_call = true;
+            stop_existing_output_input(adev);
+        } else {
+            adev->in_sco_voip_call = false;
+            stop_existing_output_input(adev);
+
+            release_resampler(adev->voip_in_resampler);
+            adev->voip_in_resampler = NULL;
+            release_resampler(adev->voip_out_resampler);
+            adev->voip_out_resampler = NULL;
+        }
+        pthread_mutex_unlock(&adev->lock);
+    }
+//BT SCO VoIP Call]
 
     return 0;
 }
@@ -986,15 +1286,15 @@ static size_t adev_get_input_buffer_size(const struct audio_hw_device *dev __unu
 static int adev_open_input_stream(struct audio_hw_device *dev,
                                   audio_io_handle_t handle __unused,
                                   audio_devices_t devices __unused,
-                                  struct audio_config *config __unused,
+                                  struct audio_config *config,
                                   struct audio_stream_in **stream_in,
                                   audio_input_flags_t flags __unused,
                                   const char *address __unused,
                                   audio_source_t source __unused)
 
 {
-    ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
-        config->sample_rate, config->format, popcount(config->channel_mask));
+    ALOGD("%s : requested config : [rate %d format %d channels %d flags %#x]",__func__,
+        config->sample_rate, config->format, popcount(config->channel_mask), flags);
 
     struct audio_device *adev = (struct audio_device *)dev;
     struct stream_in *in;
@@ -1023,6 +1323,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 
     in->dev = adev;
     in->standby = true;
+
     in->pcm_config = &pcm_config_in; /* default PCM config */
 
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
@@ -1065,6 +1366,33 @@ static int adev_close(hw_device_t *device)
     struct audio_device *adev = (struct audio_device *)device;
 
     audio_route_free(adev->ar);
+
+#ifdef DEBUG_PCM_DUMP
+    if(sco_call_write != NULL) {
+        fclose(sco_call_write);
+    }
+    if(sco_call_write_remapped != NULL) {
+        fclose(sco_call_write_remapped);
+    }
+    if(sco_call_write_bt != NULL) {
+        fclose(sco_call_write_bt);
+    }
+    if(sco_call_read != NULL) {
+        fclose(sco_call_read);
+    }
+    if(sco_call_read_remapped != NULL) {
+        fclose(sco_call_read_remapped);
+    }
+    if(sco_call_read_bt != NULL) {
+        fclose(sco_call_read_bt);
+    }
+    if(out_write_dump != NULL) {
+        fclose(out_write_dump);
+    }
+    if(in_read_dump != NULL) {
+        fclose(in_read_dump);
+    }
+#endif
 
     free(device);
     return 0;
@@ -1121,6 +1449,32 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->in_device = AUDIO_DEVICE_IN_BUILTIN_MIC & ~AUDIO_DEVICE_BIT_IN;
 
     *device = &adev->hw_device.common;
+
+//[BT SCO VoIP Call
+    update_bt_card(adev);
+
+    adev->in_sco_voip_call = false;
+    adev->is_hfp_call_active = false;
+    adev->voip_in_resampler = NULL;
+    adev->voip_out_resampler = NULL;
+//BT SCO VoIP Call]
+
+#ifdef DEBUG_PCM_DUMP
+    sco_call_write = fopen("/vendor/dump/sco_call_write.pcm", "a");
+    sco_call_write_remapped = fopen("/vendor/dump/sco_call_write_remapped.pcm", "a");
+    sco_call_write_bt = fopen("/vendor/dump/sco_call_write_bt.pcm", "a");
+    sco_call_read = fopen("/vendor/dump/sco_call_read.pcm", "a");
+    sco_call_read_remapped = fopen("/vendor/dump/sco_call_read_remapped.pcm", "a");
+    sco_call_read_bt = fopen("/vendor/dump/sco_call_read_bt.pcm", "a");
+    out_write_dump = fopen("/vendor/dump/out_write_dump.pcm", "a");
+    in_read_dump = fopen("/vendor/dump/in_read_dump.pcm", "a");
+
+    if(sco_call_write == NULL || sco_call_write_remapped == NULL || sco_call_write_bt == NULL || sco_call_read == NULL || 
+            sco_call_read_bt == NULL || sco_call_read_remapped == NULL || out_write_dump == NULL || in_read_dump == NULL)
+        ALOGD("%s : failed to open dump files",__func__);
+    else
+        ALOGD("%s : success in opening dump files",__func__);
+#endif
 
     return 0;
 
