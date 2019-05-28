@@ -51,9 +51,9 @@
 #define OUT_PERIOD_COUNT 2
 #define OUT_SAMPLING_RATE 48000
 
-#define IN_PERIOD_SIZE 480
-#define IN_PERIOD_COUNT 2
-#define IN_SAMPLING_RATE 48000
+#define IN_PERIOD_SIZE 1024
+#define IN_PERIOD_COUNT 4
+#define IN_SAMPLING_RATE 44100
 
 #define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
 #define AUDIO_PARAMETER_BT_SCO       "BT_SCO"
@@ -97,8 +97,8 @@ struct pcm_config pcm_config_in = {
 struct pcm_config bt_out_config = {
     .channels = 1,
     .rate = 8000,
-    .period_size = 80,
-    .period_count = 50,
+    .period_size = 92,
+    .period_count = 6,
     .start_threshold = 0,
     .stop_threshold = 0,
     .silence_threshold = 0,
@@ -109,8 +109,8 @@ struct pcm_config bt_out_config = {
 struct pcm_config bt_in_config = {
     .channels = 1,
     .rate = 8000,
-    .period_size = 80,
-    .period_count = 50,
+    .period_size = 92,
+    .period_count = 6,
     .start_threshold = 0,
     .stop_threshold = 0,
     .silence_threshold = 0,
@@ -1449,6 +1449,18 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->in_device = AUDIO_DEVICE_IN_BUILTIN_MIC & ~AUDIO_DEVICE_BIT_IN;
 
     *device = &adev->hw_device.common;
+
+// CLK target codec only works with sample_rate 48000, identify the target and update default pcm_config.rate if needed.
+    char product[PROPERTY_VALUE_MAX] = "cel_kbl";
+    if(property_get("ro.hardware", product, NULL) <= 0) {
+        ALOGE("%s : failed to read ro.hardware", __func__);
+    } else {
+        if(strcmp(product, "clk") == 0) {
+            pcm_config_in.rate = 48000;
+        }
+    }
+
+    ALOGI("%s : will use input samplerate as %d for %s variants", __func__, pcm_config_in.rate, product);
 
 //[BT SCO VoIP Call
     update_bt_card(adev);
