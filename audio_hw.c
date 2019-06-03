@@ -475,8 +475,11 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     struct str_parms *reply = str_parms_create();
     int ret;
 
-    if(reply == NULL || query == NULL)
+    if(reply == NULL || query == NULL) {
+        if(reply != NULL) str_parms_destroy(reply);
+        if(query != NULL) str_parms_destroy(query);
         return NULL;
+    }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
@@ -487,6 +490,10 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, out->req_config.sample_rate);
+
+        if(str_parm != NULL)
+            str_parms_destroy(str_parm);
+
         str_parm = str_parms_to_str(reply);
     }
 
@@ -494,6 +501,10 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_CHANNELS,
             (out->req_config.channel_mask == AUDIO_CHANNEL_OUT_MONO ? "AUDIO_CHANNEL_OUT_MONO" : "AUDIO_CHANNEL_OUT_STEREO"));
+
+        if(str_parm != NULL)
+            str_parms_destroy(str_parm);
+
         str_parm = str_parms_to_str(reply);
     }
 
@@ -828,8 +839,11 @@ static char * in_get_parameters(const struct audio_stream *stream,
     struct str_parms *reply = str_parms_create();
     int ret;
 
-    if(reply == NULL || query == NULL)
+    if(reply == NULL || query == NULL) {
+        if(reply != NULL) str_parms_destroy(reply);
+        if(query != NULL) str_parms_destroy(query);
         return NULL;
+    }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_FORMATS, value, sizeof(value));
     if (ret >= 0) {
@@ -840,6 +854,10 @@ static char * in_get_parameters(const struct audio_stream *stream,
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, value, sizeof(value));
     if (ret >= 0) {
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, in->req_config.sample_rate);
+
+        if(str_parm != NULL)
+            str_parms_destroy(str_parm);
+
         str_parm = str_parms_to_str(reply);
     }
 
@@ -847,6 +865,10 @@ static char * in_get_parameters(const struct audio_stream *stream,
     if (ret >= 0) {
         str_parms_add_str(reply, AUDIO_PARAMETER_STREAM_SUP_CHANNELS,
             (in->req_config.channel_mask == AUDIO_CHANNEL_IN_MONO ? "AUDIO_CHANNEL_IN_MONO" : "AUDIO_CHANNEL_IN_STEREO"));
+
+        if(str_parm != NULL)
+            str_parms_destroy(str_parm);
+
         str_parm = str_parms_to_str(reply);
     }
 
@@ -1056,8 +1078,10 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         return -ENOSYS;
 
     out = (struct stream_out *)calloc(1, sizeof(struct stream_out));
-    if (!out)
+    if (!out) {
+        free(params);
         return -ENOMEM;
+    }
 
     out->stream.common.get_sample_rate = out_get_sample_rate;
     out->stream.common.set_sample_rate = out_set_sample_rate;
@@ -1095,6 +1119,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     config->sample_rate = out_get_sample_rate(&out->stream.common);
 
     *stream_out = &out->stream;
+
+    free(params);
+
     return 0;
 }
 
@@ -1173,6 +1200,7 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
     }
 //BT SCO VoIP Call]
 
+    str_parms_destroy(parms);
     return 0;
 }
 
@@ -1190,14 +1218,17 @@ static char * adev_get_parameters(const struct audio_hw_device *dev __unused,
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_STREAM_HW_AV_SYNC, value, sizeof(value));
     if (ret >= 0) {
+        str_parms_destroy(query);
         return NULL;
     }
 
     ret = str_parms_get_str(query, AUDIO_PARAMETER_KEY_TTY_MODE, value, sizeof(value));
     if(ret >= 0) {
         ALOGE("%s : no support of TTY",__func__);
+        str_parms_destroy(query);
         return NULL;
     }
+
     str_parms_destroy(query);
     return strdup(keys);
 }
