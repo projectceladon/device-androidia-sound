@@ -1137,7 +1137,7 @@ static void stop_existing_output_input(struct audio_device *adev){
     ALOGV("%s during call scenario", __func__);
 
     if(adev->active_out != NULL) {
-        struct stream_out *out = &adev->active_out;
+        struct stream_out *out = (struct stream_out *) &adev->active_out;
         pthread_mutex_lock(&out->lock);
         ALOGV("%s closing active_out", __func__);
         do_out_standby(adev->active_out);
@@ -1145,7 +1145,7 @@ static void stop_existing_output_input(struct audio_device *adev){
     }
 
     if(adev->active_in != NULL) {
-        struct stream_out *in = &adev->active_in;
+        struct stream_in *in = (struct stream_in *) &adev->active_in;
         pthread_mutex_lock(&in->lock);
         ALOGV("%s closing active_in", __func__);
         do_in_standby(adev->active_in);
