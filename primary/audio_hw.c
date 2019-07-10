@@ -51,14 +51,16 @@
 #define OUT_PERIOD_COUNT 2
 #define OUT_SAMPLING_RATE 48000
 
-#define IN_PERIOD_SIZE 1024
+#define IN_PERIOD_SIZE 1024 //default period size
+#define IN_PERIOD_MS 10
 #define IN_PERIOD_COUNT 4
-#define IN_SAMPLING_RATE 44100
+#define IN_SAMPLING_RATE 48000
 
 #define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
 #define AUDIO_PARAMETER_BT_SCO       "BT_SCO"
 #define AUDIO_BT_DRIVER_NAME         "btaudiosource"
 #define SAMPLE_SIZE_IN_BYTES          2
+#define SAMPLE_SIZE_IN_BYTES_STEREO   4
 
 //#define DEBUG_PCM_DUMP
 
@@ -97,8 +99,8 @@ struct pcm_config pcm_config_in = {
 struct pcm_config bt_out_config = {
     .channels = 1,
     .rate = 8000,
-    .period_size = 92,
-    .period_count = 6,
+    .period_size = 240,
+    .period_count = 5,
     .start_threshold = 0,
     .stop_threshold = 0,
     .silence_threshold = 0,
@@ -109,8 +111,8 @@ struct pcm_config bt_out_config = {
 struct pcm_config bt_in_config = {
     .channels = 1,
     .rate = 8000,
-    .period_size = 92,
-    .period_count = 6,
+    .period_size = 240,
+    .period_count = 5,
     .start_threshold = 0,
     .stop_threshold = 0,
     .silence_threshold = 0,
@@ -136,6 +138,9 @@ struct audio_device {
 //[BT-HFP Voice Call
     bool is_hfp_call_active;
 //BT-HFP Voice Call]
+
+    bool in_needs_standby;
+    bool out_needs_standby;
 
 //[BT SCO VoIP Call
     bool in_sco_voip_call;
@@ -548,6 +553,12 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
      */
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&out->lock);
+
+    if(adev->out_needs_standby) {
+        do_out_standby(out);
+        adev->out_needs_standby = false;
+    }
+
     if (out->standby) {
         if(!adev->is_hfp_call_active) {
             ret = start_output_stream(out);
@@ -617,7 +628,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         if(sco_call_write_remapped != NULL) {
             fwrite(buf_remapped, 1, buf_size_remapped, sco_call_write_remapped);
         } else {
-            ALOGD("%s : sco_call_read_remapped was NULL, no dump", __func__);
+            ALOGD("%s : sco_call_write_remapped was NULL, no dump", __func__);
         }
 #endif
 
@@ -901,6 +912,12 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
      */
     pthread_mutex_lock(&adev->lock);
     pthread_mutex_lock(&in->lock);
+
+    if(adev->in_needs_standby) {
+        do_in_standby(in);
+        adev->in_needs_standby = false;
+    }
+
     if (in->standby) {
         if(!adev->is_hfp_call_active) {
             ret = start_input_stream(in);
@@ -1134,23 +1151,9 @@ static void adev_close_output_stream(struct audio_hw_device *dev __unused,
 
 //called with adev lock
 static void stop_existing_output_input(struct audio_device *adev){
-    ALOGV("%s during call scenario", __func__);
-
-    if(adev->active_out != NULL) {
-        struct stream_out *out = (struct stream_out *) &adev->active_out;
-        pthread_mutex_lock(&out->lock);
-        ALOGV("%s closing active_out", __func__);
-        do_out_standby(adev->active_out);
-        pthread_mutex_unlock(&out->lock);
-    }
-
-    if(adev->active_in != NULL) {
-        struct stream_in *in = (struct stream_in *) &adev->active_in;
-        pthread_mutex_lock(&in->lock);
-        ALOGV("%s closing active_in", __func__);
-        do_in_standby(adev->active_in);
-        pthread_mutex_unlock(&in->lock);
-    }
+    ALOGD("%s during call scenario", __func__);
+    adev->in_needs_standby = true;
+    adev->out_needs_standby = true;
 }
 
 static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
@@ -1276,8 +1279,15 @@ static int adev_get_master_mute(struct audio_hw_device *dev __unused, bool *mute
     ALOGV("adev_get_master_mute: %d", *muted);
     return -ENOSYS;
 }
-static int adev_set_mode(struct audio_hw_device *dev __unused, audio_mode_t mode __unused)
+static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
 {
+    ALOGD("%s : mode : %d", __func__, mode);
+    struct audio_device *adev = (struct audio_device *)dev;
+
+    pthread_mutex_lock(&adev->lock);
+    stop_existing_output_input(adev);
+    pthread_mutex_unlock(&adev->lock);
+
     return 0;
 }
 
@@ -1491,7 +1501,11 @@ static int adev_open(const hw_module_t* module, const char* name,
         }
     }
 
-    ALOGI("%s : will use input samplerate as %d for %s variants", __func__, pcm_config_in.rate, product);
+//Update period_size based on sample rate and period_ms
+    size_t size = (pcm_config_in.rate * IN_PERIOD_MS * SAMPLE_SIZE_IN_BYTES_STEREO) / 1000;
+    pcm_config_in.period_size = size;
+
+    ALOGI("%s : will use input [rate : period] as [%d : %zu] for %s variants", __func__, pcm_config_in.rate, pcm_config_in.period_size, product);
 
 //[BT SCO VoIP Call
     update_bt_card(adev);
@@ -1501,6 +1515,9 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->voip_in_resampler = NULL;
     adev->voip_out_resampler = NULL;
 //BT SCO VoIP Call]
+
+    adev->in_needs_standby = false;
+    adev->out_needs_standby = false;
 
 #ifdef DEBUG_PCM_DUMP
     sco_call_write = fopen("/vendor/dump/sco_call_write.pcm", "a");
