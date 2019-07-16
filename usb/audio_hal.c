@@ -300,6 +300,11 @@ static bool parse_card_device_params(const char *kvpairs, int *card, int *device
     char value[32];
     int param_val;
 
+    if(parms == NULL) {
+        ALOGE("%s : Invalid kvpairs", __func__);
+        return false;
+    }
+
     // initialize to "undefined" state.
     *card = -1;
     *device = -1;
@@ -327,6 +332,12 @@ static char *device_get_parameters(const alsa_device_profile *profile, const cha
 
     struct str_parms *query = str_parms_create_str(keys);
     struct str_parms *result = str_parms_create();
+
+    if(result == NULL || query == NULL) {
+        if(result != NULL) str_parms_destroy(result);
+        if(query != NULL) str_parms_destroy(query);
+        return NULL;
+    }
 
     /* These keys are from hardware/libhardware/include/audio.h */
     /* supported sample rates */
