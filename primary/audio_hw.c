@@ -271,7 +271,6 @@ static unsigned int round_to_16_mult(unsigned int size)
 static int start_output_stream(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
-    int ret;
 
     ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
             out->pcm_config->rate, out->pcm_config->format, out->pcm_config->channels);
@@ -279,13 +278,6 @@ static int start_output_stream(struct stream_out *out)
     if (out->unavailable) {
         ALOGV("start_output_stream: output not available");
         return -ENODEV;
-    }
-
-    ret = system("ls /proc/asound/card0/pcm0p");
-    if(!ret) {
-        adev->card = PCM_CARD_DEFAULT;
-    } else {
-        adev->card = get_pcm_card("Dummy");
     }
 
 //[BT SCO VoIP Call
@@ -324,16 +316,6 @@ static int start_output_stream(struct stream_out *out)
 static int start_input_stream(struct stream_in *in)
 {
     struct audio_device *adev = in->dev;
-
-    int ret;
-
-    ret = system("ls /proc/asound/card0/pcm0c");
-
-    if(!ret) {
-       adev->cardc = PCM_CARD_DEFAULT;
-    } else {
-        adev->cardc = get_pcm_card("Dummy");
-    }
 
 //[BT SCO VoIP Call
     if(adev->in_sco_voip_call) {
@@ -1079,17 +1061,16 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 
     int ret;
 
-    ret = system("ls /proc/asound/card0/pcm0p");
+    params = pcm_params_get(PCM_CARD_DEFAULT, PCM_DEVICE, PCM_OUT);
 
-    if(!ret) {
+    if(params != NULL) {
        adev->card = PCM_CARD_DEFAULT;
     } else {
         adev->card = get_pcm_card("Dummy");
+        params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
     }
 
     ALOGI("PCM playback card selected = %d, \n", adev->card);
-
-    params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
 
     if (!params)
         return -ENOSYS;
@@ -1339,12 +1320,26 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 
     struct audio_device *adev = (struct audio_device *)dev;
     struct stream_in *in;
+    struct pcm_params *params;
 
     *stream_in = NULL;
 
+    params = pcm_params_get(PCM_CARD_DEFAULT, PCM_DEVICE, PCM_IN);
+
+    if(params != NULL) {
+        adev->cardc = PCM_CARD_DEFAULT;
+    } else {
+        adev->cardc = get_pcm_card("Dummy");
+        params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+    }
+
+    ALOGI("PCM capture card selected = %d, \n", adev->card);
+
     in = (struct stream_in *)calloc(1, sizeof(struct stream_in));
-    if (!in)
+    if (!in) {
+        free(params);
         return -ENOMEM;
+    }
 
     in->stream.common.get_sample_rate = in_get_sample_rate;
     in->stream.common.set_sample_rate = in_set_sample_rate;
@@ -1372,6 +1367,8 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
     memcpy(&in->req_config, config, sizeof(struct audio_config));
 
     *stream_in = &in->stream;
+
+    free(params);
     return 0;
 }
 
