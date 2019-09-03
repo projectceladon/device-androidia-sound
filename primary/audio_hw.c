@@ -50,8 +50,8 @@
 #define PCM_CARD_DEFAULT 0
 #define PCM_DEVICE 0
 
-#define OUT_PERIOD_SIZE 480
-#define OUT_PERIOD_COUNT 2
+#define OUT_PERIOD_SIZE 1024
+#define OUT_PERIOD_COUNT 4
 #define OUT_SAMPLING_RATE 48000
 
 #define IN_PERIOD_SIZE 1024 //default period size
