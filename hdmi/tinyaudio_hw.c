@@ -534,7 +534,7 @@ static char * out_get_parameters(const struct audio_stream *stream, const char *
                       if (append) {
                           strcat(value, "|");
                       }
-                      strcat(value, channel_list_table[j].name);
+                      strncat(value, channel_list_table[j].name, sizeof(value) - (strlen(value) + 1));
                       append = true;
                       break;
                    }
