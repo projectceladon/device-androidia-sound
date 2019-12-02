@@ -15,7 +15,7 @@
  */
 
 #define LOG_TAG "audio_hw_primary"
-/*#define LOG_NDEBUG 0*/
+#define LOG_NDEBUG 0
 
 #include <dirent.h>
 #include <errno.h>
@@ -132,6 +132,8 @@ struct audio_device {
     
     int card;
     int cardc;
+    bool virtual_play;
+    bool virtual_cap;
     struct stream_out *active_out;
     struct stream_in *active_in;
 
@@ -152,6 +154,7 @@ struct audio_device {
 
 struct stream_out {
     struct audio_stream_out stream;
+    int64_t time_last_write;
 
     pthread_mutex_t lock; /* see note below on mutex acquisition order */
     struct pcm *pcm;
@@ -166,6 +169,7 @@ struct stream_out {
 struct stream_in {
     struct audio_stream_in stream;
 
+    int64_t time_last_read;
     pthread_mutex_t lock; /* see note below on mutex acquisition order */
     struct pcm *pcm;
     struct pcm_config *pcm_config;
@@ -218,11 +222,13 @@ static void select_devices(struct audio_device *adev)
 static void do_out_standby(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
-    if (!out->standby) {
-        pcm_close(out->pcm);
-        out->pcm = NULL;
-        adev->active_out = NULL;
-        out->standby = true;
+    if (!(adev->virtual_play)){
+	if (!out->standby) {
+            pcm_close(out->pcm);
+	    out->pcm = NULL;
+            adev->active_out = NULL;
+	    out->standby = true;
+    	}
     }
 }
 
@@ -230,11 +236,13 @@ static void do_out_standby(struct stream_out *out)
 static void do_in_standby(struct stream_in *in)
 {
     struct audio_device *adev = in->dev;
-    if (!in->standby) {
-        pcm_close(in->pcm);
-        in->pcm = NULL;
-        adev->active_in = NULL;
-        in->standby = true;
+    if (!(adev->virtual_cap)){
+        if (!in->standby) {
+            pcm_close(in->pcm);
+            in->pcm = NULL;
+            adev->active_in = NULL;
+            in->standby = true;
+        }
     }
 }
 
@@ -272,8 +280,7 @@ static int start_output_stream(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
     int ret;
-
-    ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
+	ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
             out->pcm_config->rate, out->pcm_config->format, out->pcm_config->channels);
 
     if (out->unavailable) {
@@ -285,8 +292,8 @@ static int start_output_stream(struct stream_out *out)
     if(!ret) {
         adev->card = PCM_CARD_DEFAULT;
     } else {
-        adev->card = get_pcm_card("Dummy");
-    }
+        adev->virtual_play = 1;
+	}
 
 //[BT SCO VoIP Call
     if(adev->in_sco_voip_call) {
@@ -297,6 +304,8 @@ static int start_output_stream(struct stream_out *out)
 
         out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
 //BT SCO VoIP Call]
+    } else if (adev->virtual_play){
+	    return 0;
     } else {
         ALOGI("PCM playback card selected = %d, \n", adev->card);
         out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
@@ -326,13 +335,13 @@ static int start_input_stream(struct stream_in *in)
     struct audio_device *adev = in->dev;
 
     int ret;
-
     ret = system("ls /proc/asound/card0/pcm0c");
 
     if(!ret) {
        adev->cardc = PCM_CARD_DEFAULT;
     } else {
-        adev->cardc = get_pcm_card("Dummy");
+        adev->virtual_cap = 1;
+        ALOGV("Setting virtual device for capture");
     }
 
 //[BT SCO VoIP Call
@@ -344,8 +353,11 @@ static int start_input_stream(struct stream_in *in)
 
         in->pcm = pcm_open(adev->bt_card, PCM_DEVICE, PCM_IN, &bt_in_config);
 //BT SCO VoIP Call]
-    } else {
-        ALOGI("PCM record card selected = %d, \n", adev->card);
+    } else if (adev->virtual_cap) {
+	return 0;
+    }else {
+
+        ALOGI("PCM record card selected = %d, \n", adev->cardc);
 
         ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
             in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
@@ -417,6 +429,7 @@ static int out_standby(struct audio_stream *stream)
     ALOGV("out_standby");
     pthread_mutex_lock(&out->dev->lock);
     pthread_mutex_lock(&out->lock);
+    out->unavailable = false;
     do_out_standby(out);
     pthread_mutex_unlock(&out->lock);
     pthread_mutex_unlock(&out->dev->lock);
@@ -656,6 +669,21 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         free(buf_out);
         free(buf_remapped);
 //BT SCO VoIP Call]
+    } else if (adev->virtual_play){
+        ALOGV("Setting virtual device for playback");
+
+        struct timespec time = { .tv_sec = 0, .tv_nsec = 0 };
+        clock_gettime(CLOCK_MONOTONIC, &time);
+        const int64_t current = (time.tv_sec * 1000000000LL + time.tv_nsec) / 1000;
+        const int64_t time_elapsed = current - out->time_last_write;
+        int64_t sleep_duration = bytes * 1000000LL / audio_stream_out_frame_size(stream) /
+                   out_get_sample_rate(&stream->common) - time_elapsed;
+        if (sleep_duration > 0) {
+            usleep(sleep_duration);
+        } else {
+            sleep_duration = 0;
+        }
+        out->time_last_write = current + sleep_duration;
     } else {
         /* Normal pcm out to primary card */
         ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
@@ -1013,6 +1041,26 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
         free(buf_out);
         free(buf_remapped);
 //BT SCO VoIP Call]
+    } else if (adev->virtual_cap) {
+
+        ALOGV("Setting virtual device for capture");
+	struct timespec time = { .tv_sec = 0, .tv_nsec = 0 };
+	clock_gettime(CLOCK_MONOTONIC, &time);
+	const int64_t current = (time.tv_sec * 1000000000LL + time.tv_nsec) / 1000;
+
+	const bool standby = in->time_last_read == 0;
+	const int64_t time_elapsed = standby ?
+		             0 : current - in->time_last_read;
+	int64_t sleep_duration = bytes * 1000000LL / audio_stream_in_frame_size(stream) /
+		             in_get_sample_rate(&stream->common) - time_elapsed;
+	
+	if (sleep_duration > 0) {
+	    usleep(sleep_duration);
+	} else {
+	   sleep_duration = 0;
+	}
+	in->time_last_read = current + sleep_duration;
+
     } else {
         /* pcm read for primary card */
         ret = pcm_read(in->pcm, buffer, bytes);
@@ -1078,25 +1126,29 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     struct pcm_params *params;
 
     int ret;
-
+    adev->virtual_play = 0;
     ret = system("ls /proc/asound/card0/pcm0p");
 
     if(!ret) {
        adev->card = PCM_CARD_DEFAULT;
     } else {
-        adev->card = get_pcm_card("Dummy");
+       adev->virtual_play = 1;
     }
 
     ALOGI("PCM playback card selected = %d, \n", adev->card);
 
-    params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+    if (!adev->virtual_play) {
+    	params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
 
-    if (!params)
-        return -ENOSYS;
+	if (!params)
+      		return -ENOSYS;
+    }
 
     out = (struct stream_out *)calloc(1, sizeof(struct stream_out));
     if (!out) {
-        free(params);
+        if (!adev->virtual_play) {
+		free(params);
+        }
         return -ENOMEM;
     }
 
