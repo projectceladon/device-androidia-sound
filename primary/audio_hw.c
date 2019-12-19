@@ -15,8 +15,13 @@
  */
 
 #define LOG_TAG "audio_hw_primary"
-/*#define LOG_NDEBUG 0*/
-
+//#define LOG_NDEBUG 0
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <sys/un.h>
+#ifndef SUN_LEN
+#define SUN_LEN(ptr) ((size_t) (((struct sockaddr_un *) 0)->sun_path) + strlen((ptr)->sun_path))
+#endif
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -47,13 +52,14 @@
 #define PCM_CARD_DEFAULT 0
 #define PCM_DEVICE 0
 
-#define OUT_PERIOD_SIZE 480
+#define CIC_SOCKET_OUT "/data/misc/audio/cic_pulseaudio_out.socket"
+#define CIC_SOCKET_IN "/data/misc/audio/cic_pulseaudio_in.socket"
+#define OUT_PERIOD_SIZE 4800
 #define OUT_PERIOD_COUNT 2
 #define OUT_SAMPLING_RATE 48000
-
-#define IN_PERIOD_SIZE 1024 //default period size
+#define IN_PERIOD_SIZE 4800
 #define IN_PERIOD_MS 10
-#define IN_PERIOD_COUNT 4
+#define IN_PERIOD_COUNT 2
 #define IN_SAMPLING_RATE 48000
 
 #define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
@@ -161,6 +167,8 @@ struct stream_out {
     bool standby;
     uint64_t written;
     struct audio_device *dev;
+    int sock;
+    int64_t last_write_time_us;
 };
 
 struct stream_in {
@@ -174,6 +182,8 @@ struct stream_in {
     bool standby;
 
     struct audio_device *dev;
+    int sock;
+    int64_t last_read_time_us;
 };
 
 static uint32_t out_get_sample_rate(const struct audio_stream *stream);
@@ -219,9 +229,15 @@ static void do_out_standby(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
     if (!out->standby) {
-        pcm_close(out->pcm);
+        if (out->pcm) {
+            pcm_close(out->pcm);
+        }
         out->pcm = NULL;
         adev->active_out = NULL;
+        if(out->sock > 0){
+            close(out->sock);
+            out->sock = 0;
+        }
         out->standby = true;
     }
 }
@@ -231,9 +247,15 @@ static void do_in_standby(struct stream_in *in)
 {
     struct audio_device *adev = in->dev;
     if (!in->standby) {
-        pcm_close(in->pcm);
+        if (in->pcm) {
+            pcm_close(in->pcm);
+        }
         in->pcm = NULL;
         adev->active_in = NULL;
+        if(in->sock > 0){
+            close(in->sock);
+            in->sock = 0;
+        }
         in->standby = true;
     }
 }
@@ -287,35 +309,52 @@ static int start_output_stream(struct stream_out *out)
     } else {
         adev->card = get_pcm_card("Dummy");
     }
+    struct sockaddr_un serv_addr;
+    if(out->sock <= 0){
+        out->sock = socket(AF_UNIX, SOCK_STREAM, 0);
+        if(out->sock < 0)
+        {
+            ALOGE("Socket creation error");
+        } else {
+            ALOGD("%s : Using PulseAudio Socket", __func__);
+            memset(&serv_addr, 0, sizeof(serv_addr));
+            serv_addr.sun_family = AF_UNIX;
+            strcpy(serv_addr.sun_path, CIC_SOCKET_OUT);
 
-//[BT SCO VoIP Call
-    if(adev->in_sco_voip_call) {
-        ALOGD("%s : sco voip call active", __func__);
-
-        ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]", __func__, adev->bt_card, PCM_DEVICE,
-                bt_out_config.rate, bt_out_config.format, bt_out_config.channels);
-
-        out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
-//BT SCO VoIP Call]
-    } else {
-        ALOGI("PCM playback card selected = %d, \n", adev->card);
-        out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
+            if (connect(out->sock, (struct sockaddr *)&serv_addr, SUN_LEN(&serv_addr)) < 0)
+            {
+                ALOGE("Socket Connection Failed");
+                out->sock = 0;
+            }
+        }
     }
+    if(out->sock <= 0){
+//[BT SCO VoIP Call
+        if(adev->in_sco_voip_call) {
+            ALOGD("%s : sco voip call active", __func__);
+            ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]", __func__, adev->bt_card, PCM_DEVICE,
+                    bt_out_config.rate, bt_out_config.format, bt_out_config.channels);
+            out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
+//BT SCO VoIP Call]
+        } else {
+            ALOGI("PCM playback card selected = %d, \n", adev->card);
+            out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
+        }
 
-    if (!out->pcm) {
-        ALOGE("pcm_open(out) failed: device not found");
-        return -ENODEV;
-    } else if (!pcm_is_ready(out->pcm)) {
-        ALOGE("pcm_open(out) failed: %s", pcm_get_error(out->pcm));
-        pcm_close(out->pcm);
-        out->unavailable = true;
-        return -ENOMEM;
+        if (!out->pcm) {
+            ALOGE("pcm_open(out) failed: device not found");
+            return -ENODEV;
+        } else if (!pcm_is_ready(out->pcm)) {
+            ALOGE("pcm_open(out) failed: %s", pcm_get_error(out->pcm));
+            pcm_close(out->pcm);
+            out->unavailable = true;
+            return -ENOMEM;
+        }
+        /* force mixer updates */
+        select_devices(adev);
     }
 
     adev->active_out = out;
-
-    /* force mixer updates */
-    select_devices(adev);
 
     return 0;
 }
@@ -334,37 +373,51 @@ static int start_input_stream(struct stream_in *in)
     } else {
         adev->cardc = get_pcm_card("Dummy");
     }
-
-//[BT SCO VoIP Call
-    if(adev->in_sco_voip_call) {
-        ALOGD("%s : sco voip call active", __func__);
-
-        ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]",__func__, adev->bt_card, PCM_DEVICE,
-                bt_in_config.rate, bt_in_config.format, bt_in_config.channels);
-
-        in->pcm = pcm_open(adev->bt_card, PCM_DEVICE, PCM_IN, &bt_in_config);
-//BT SCO VoIP Call]
-    } else {
-        ALOGI("PCM record card selected = %d, \n", adev->card);
-
-        ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
-            in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
-
-        in->pcm = pcm_open(adev->cardc, PCM_DEVICE, PCM_IN, in->pcm_config);
+	struct sockaddr_un serv_addr;
+	if(in->sock <= 0)
+	{
+        in->sock = socket(AF_UNIX, SOCK_STREAM, 0);
+        if(in->sock < 0)
+        {
+            ALOGE("IN Socket creation error");
+        } else {
+            memset(&serv_addr, 0, sizeof(serv_addr));
+            serv_addr.sun_family = AF_UNIX;
+            strcpy(serv_addr.sun_path, CIC_SOCKET_IN);
+            if (connect(in->sock, (struct sockaddr *)&serv_addr, SUN_LEN(&serv_addr)) < 0)
+            {
+                ALOGE("Socket Connection Failed");
+                in->sock = 0;
+            }
+        }
     }
 
-    if (!in->pcm) {
-        return -ENODEV;
-    } else if (!pcm_is_ready(in->pcm)) {
-        ALOGE("pcm_open(in) failed: %s", pcm_get_error(in->pcm));
-        pcm_close(in->pcm);
-        return -ENOMEM;
+	if(in->sock <= 0) {
+//[BT SCO VoIP Call
+        if(adev->in_sco_voip_call) {
+            ALOGD("%s : sco voip call active", __func__);
+            ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]",__func__, adev->bt_card, PCM_DEVICE,
+                    bt_in_config.rate, bt_in_config.format, bt_in_config.channels);
+            in->pcm = pcm_open(adev->bt_card, PCM_DEVICE, PCM_IN, &bt_in_config);
+//BT SCO VoIP Call]
+        } else {
+            ALOGI("PCM record card selected = %d, \n", adev->card);
+            ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
+                in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
+            in->pcm = pcm_open(adev->cardc, PCM_DEVICE, PCM_IN, in->pcm_config);
+        }
+        if (!in->pcm) {
+            return -ENODEV;
+        } else if (!pcm_is_ready(in->pcm)) {
+            ALOGE("pcm_open(in) failed: %s", pcm_get_error(in->pcm));
+            pcm_close(in->pcm);
+            return -ENOMEM;
+        }
+        /* force mixer updates */
+        select_devices(adev);
     }
 
     adev->active_in = in;
-
-    /* force mixer updates */
-    select_devices(adev);
 
     return 0;
 }
@@ -374,8 +427,8 @@ static int start_input_stream(struct stream_in *in)
 static uint32_t out_get_sample_rate(const struct audio_stream *stream)
 {
     struct stream_out *out = (struct stream_out *)stream;
-    ALOGV("%s : rate %d",__func__, out->req_config.sample_rate);
-    return out->req_config.sample_rate;
+    ALOGV("%s : req_rate %d , ret_rate %d",__func__, out->req_config.sample_rate, out->pcm_config->rate);
+    return out->pcm_config->rate;//VTS Failure ???
 }
 
 static int out_set_sample_rate(struct audio_stream *stream __unused, uint32_t rate __unused)
@@ -417,6 +470,7 @@ static int out_standby(struct audio_stream *stream)
     ALOGV("out_standby");
     pthread_mutex_lock(&out->dev->lock);
     pthread_mutex_lock(&out->lock);
+    out->unavailable = false;//Recovery for pcm open failure
     do_out_standby(out);
     pthread_mutex_unlock(&out->lock);
     pthread_mutex_unlock(&out->dev->lock);
@@ -657,8 +711,26 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         free(buf_remapped);
 //BT SCO VoIP Call]
     } else {
-        /* Normal pcm out to primary card */
-        ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
+        if(out->sock > 0) {
+            ret = send(out->sock , out_buffer , bytes , 0 );
+            struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
+            clock_gettime(CLOCK_MONOTONIC, &t);
+            const int64_t now = (t.tv_sec * 1000000000LL + t.tv_nsec) / 1000;
+            const int64_t elapsed_time_since_last_write = now - out->last_write_time_us;
+            int64_t sleep_time = bytes * 1000000LL / audio_stream_out_frame_size(stream) /
+                    out_get_sample_rate(&stream->common) - elapsed_time_since_last_write;
+            if (sleep_time > 0) {
+                usleep(sleep_time);
+            } else {
+                // we don't sleep when we exit standby (this is typical for a real alsa buffer).
+                sleep_time = 0;
+            }
+            ALOGV("Sleep for %llu ms sample_rate %d, ret = %d", sleep_time, out->pcm_config->rate, ret);
+            out->last_write_time_us = now + sleep_time;
+        } else {
+            /* Normal pcm out to primary card */
+            ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
+        }
 
 #ifdef DEBUG_PCM_DUMP
         if(out_write_dump != NULL) {
@@ -682,7 +754,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 exit:
     pthread_mutex_unlock(&out->lock);
 
-    if (ret != 0) {
+    if (ret < 0) {
         ALOGW("out_write error: %d, sleeping...", ret);
         usleep(bytes * 1000000 / audio_stream_out_frame_size(stream) /
                out_get_sample_rate(&stream->common));
@@ -800,6 +872,7 @@ static int in_standby(struct audio_stream *stream)
     pthread_mutex_lock(&in->dev->lock);
     pthread_mutex_lock(&in->lock);
     do_in_standby(in);
+    in->last_read_time_us = 0;
     pthread_mutex_unlock(&in->lock);
     pthread_mutex_unlock(&in->dev->lock);
 
@@ -1014,8 +1087,29 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
         free(buf_remapped);
 //BT SCO VoIP Call]
     } else {
-        /* pcm read for primary card */
-        ret = pcm_read(in->pcm, buffer, bytes);
+        if(in->sock >0) {
+            ret = recv(in->sock , buffer , bytes , 0 );
+            size_t frame_size = audio_stream_in_frame_size(stream);
+            unsigned int in_frames = bytes / frame_size;
+            struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
+            clock_gettime(CLOCK_MONOTONIC, &t);
+            const int64_t now = (t.tv_sec * 1000000000LL + t.tv_nsec) / 1000;
+            const bool standby = in->last_read_time_us == 0;
+            const int64_t elapsed_time_since_last_read = standby ?
+                    0 : now - in->last_read_time_us;
+            int64_t sleep_time = bytes * 1000000LL / audio_stream_in_frame_size(stream) /
+                    in_get_sample_rate(&stream->common) - elapsed_time_since_last_read;
+            if (sleep_time > 0) {
+                usleep(sleep_time);
+            } else {
+                sleep_time = 0;
+            }
+            ALOGV("Sleep for %llu ms sample_rate %d, ret = %d", sleep_time, in->pcm_config->rate, ret);
+            in->last_read_time_us = now + sleep_time;
+        } else {
+            /* pcm read for primary card */
+            ret = pcm_read(in->pcm, buffer, bytes);
+        }
 
 #ifdef DEBUG_PCM_DUMP
         if(in_read_dump != NULL) {
@@ -1092,7 +1186,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
 
     if (!params)
-        return -ENOSYS;
+        ALOGE("%s : Could not retreive pcm parameters", __func__);//return -ENOSYS;//Returning here would prevent creation of output stream for flinger
 
     out = (struct stream_out *)calloc(1, sizeof(struct stream_out));
     if (!out) {
@@ -1126,6 +1220,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
 //       make a copy of requested config to feed it back if requested.
     memcpy(&out->req_config, config, sizeof(struct audio_config));
+    out->sock = 0;
 
     out->dev = adev;
     out->standby = true;
@@ -1370,6 +1465,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
 //       make a copy of requested config to feed it back if requested.
     memcpy(&in->req_config, config, sizeof(struct audio_config));
+    in->sock = 0;
 
     *stream_in = &in->stream;
     return 0;
@@ -1501,9 +1597,10 @@ static int adev_open(const hw_module_t* module, const char* name,
         }
     }
 
+//TODO: This code to recalculate period_size has to be optimized for SCO/hfp usecases
 //Update period_size based on sample rate and period_ms
-    size_t size = (pcm_config_in.rate * IN_PERIOD_MS * SAMPLE_SIZE_IN_BYTES_STEREO) / 1000;
-    pcm_config_in.period_size = size;
+//    size_t size = (pcm_config_in.rate * IN_PERIOD_MS * SAMPLE_SIZE_IN_BYTES_STEREO) / 1000;
+//    pcm_config_in.period_size = size;
 
     ALOGI("%s : will use input [rate : period] as [%d : %zu] for %s variants", __func__, pcm_config_in.rate, pcm_config_in.period_size, product);
 
