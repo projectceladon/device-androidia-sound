@@ -223,6 +223,8 @@ static void do_out_standby(struct stream_out *out)
         out->pcm = NULL;
         adev->active_out = NULL;
         out->standby = true;
+        close(out->sock);
+        out->sock = -1;
     }
 }
 
@@ -235,6 +237,8 @@ static void do_in_standby(struct stream_in *in)
         in->pcm = NULL;
         adev->active_in = NULL;
         in->standby = true;
+        close(in->sock);
+        in->sock = -1;
     }
 }
 
