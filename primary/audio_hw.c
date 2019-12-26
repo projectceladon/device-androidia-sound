@@ -17,8 +17,6 @@
 #define LOG_TAG "audio_hw_primary"
 /*#define LOG_NDEBUG 0*/
 
-#define USE_PULSE 1
-
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -38,8 +36,8 @@
 #include <system/audio.h>
 
 #include <linux/ioctl.h>
+#include <sound/asound.h>
 #include <tinyalsa/asoundlib.h>
-#include <alsa/asoundlib.h>
 
 #include <audio_utils/channels.h>
 #include <audio_utils/resampler.h>
@@ -162,11 +160,6 @@ struct stream_out {
     bool unavailable;
     bool standby;
     uint64_t written;
-
-    // Alsa handle
-    snd_pcm_t *handle;
-    snd_pcm_hw_params_t *params;
-
     struct audio_device *dev;
 };
 
@@ -180,7 +173,6 @@ struct stream_in {
     bool unavailable;
     bool standby;
 
-
     struct audio_device *dev;
 };
 
@@ -190,7 +182,6 @@ static audio_format_t out_get_format(const struct audio_stream *stream);
 static uint32_t in_get_sample_rate(const struct audio_stream *stream);
 static size_t in_get_buffer_size(const struct audio_stream *stream);
 static audio_format_t in_get_format(const struct audio_stream *stream);
-static void __snd_pcm_settings(struct stream_out *out);
 
 static void select_devices(struct audio_device *adev)
 {
@@ -228,14 +219,8 @@ static void do_out_standby(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
     if (!out->standby) {
-#ifdef USE_PULSE
-        snd_pcm_drain(out->handle);
-        snd_pcm_close(out->handle);
-        out->handle = NULL;
-#else
         pcm_close(out->pcm);
         out->pcm = NULL;
-#endif
         adev->active_out = NULL;
         out->standby = true;
     }
@@ -306,16 +291,9 @@ static int start_output_stream(struct stream_out *out)
 //BT SCO VoIP Call]
     } else {
         ALOGI("PCM playback card selected = %d, \n", adev->card);
-#ifdef USE_PULSE
-		const char *alsa_device = "pulse";
-    	snd_pcm_open(&out->handle, alsa_device, SND_PCM_STREAM_PLAYBACK, 0);
-		__snd_pcm_settings(out);
-#else
         out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
-#endif
     }
 
-#ifndef USE_PULSE
     if (!out->pcm) {
         ALOGE("pcm_open(out) failed: device not found");
         return -ENODEV;
@@ -325,7 +303,6 @@ static int start_output_stream(struct stream_out *out)
         out->unavailable = true;
         return -ENOMEM;
     }
-#endif
 
     adev->active_out = out;
 
@@ -334,55 +311,6 @@ static int start_output_stream(struct stream_out *out)
 
     return 0;
 }
-
-static void __snd_pcm_settings(struct stream_out *out)
-{
-  int rc;
-  unsigned int rate;
-
-  /* Allocate a hardware parameters object. */
-  snd_pcm_hw_params_alloca(&out->params);
-
-  /* Fill it in with default values. */
-  snd_pcm_hw_params_any(out->handle, out->params);
-
-  /* Set the desired hardware parameters. */
-
-  /* Interleaved mode */
-  snd_pcm_hw_params_set_access(out->handle, out->params,
-                      SND_PCM_ACCESS_RW_INTERLEAVED);
-
-  /* Signed 16-bit little-endian format */
-  snd_pcm_hw_params_set_format(out->handle, out->params,
-                              SND_PCM_FORMAT_S16_LE);
-
-  /* Two channels (stereo) */
-  snd_pcm_hw_params_set_channels(out->handle, out->params, 2);
-
-  /* 44100 bits/second sampling rate (CD quality) */
-  rate = 44100;
-  snd_pcm_hw_params_set_rate_near(out->handle, out->params,
-                                  &rate, NULL);
-
-  /* Set period size to 192 frames. */
-  snd_pcm_uframes_t frames = 192;
-  snd_pcm_hw_params_set_period_size_near(out->handle,
-                              out->params, &frames, NULL);
-  frames = 0;
-  snd_pcm_hw_params_get_period_size(out->params, &frames, NULL);
-  printf("##### frames: %lu\n", frames);
-
-  /* Write the parameters to the driver */
-  rc = snd_pcm_hw_params(out->handle, out->params);
-  if (rc < 0) {
-    fprintf(stderr,
-            "unable to set hw parameters: %s\n",
-            snd_strerror(rc));
-    exit(1);
-  }
-
-}
-
 
 /* must be called with hw device and input stream mutexes locked */
 static int start_input_stream(struct stream_in *in)
@@ -711,12 +639,8 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         free(buf_remapped);
 //BT SCO VoIP Call]
     } else {
-#ifdef USE_PULSE
-		ret = snd_pcm_writei(out->handle, out_buffer, out_frames * frame_size);
-#else
         /* Normal pcm out to primary card */
         ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
-#endif
 
 #ifdef DEBUG_PCM_DUMP
         if(out_write_dump != NULL) {
