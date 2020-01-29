@@ -747,7 +747,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         }
     }
 
-    if (ret == 0) {
+    if (ret >= 0) {
         out->written += out_frames;
     }
 
@@ -789,6 +789,12 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
             }
         }
     }
+    else if(out->sock > 0) {
+        *frames = out->written;
+        clock_gettime(CLOCK_MONOTONIC, timestamp);
+        ret = 0;
+    }
+    ALOGV("%s OUT : frames : %lld timestamp.tv_nsec : %ld ", __func__, *frames, timestamp->tv_nsec);
 
     return ret;
 }
