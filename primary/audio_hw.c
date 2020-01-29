@@ -16,12 +16,6 @@
 
 #define LOG_TAG "audio_hw_primary"
 //#define LOG_NDEBUG 0
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <sys/un.h>
-#ifndef SUN_LEN
-#define SUN_LEN(ptr) ((size_t) (((struct sockaddr_un *) 0)->sun_path) + strlen((ptr)->sun_path))
-#endif
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -48,12 +42,25 @@
 #include <audio_utils/resampler.h>
 #include <audio_route/audio_route.h>
 
+#define USE_PULSE_SOCKET
+#ifdef USE_PULSE_SOCKET
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <sys/un.h>
+#ifndef SUN_LEN
+#define SUN_LEN(ptr) ((size_t) (((struct sockaddr_un *) 0)->sun_path) + strlen((ptr)->sun_path))
+#endif
+#endif
+
 #define PCM_CARD 0
 #define PCM_CARD_DEFAULT 0
 #define PCM_DEVICE 0
 
+#ifdef USE_PULSE_SOCKET
 #define CIC_SOCKET_OUT "/data/misc/audio/cic_pulseaudio_out.socket"
 #define CIC_SOCKET_IN "/data/misc/audio/cic_pulseaudio_in.socket"
+#endif
+
 #define OUT_PERIOD_SIZE 4800
 #define OUT_PERIOD_COUNT 2
 #define OUT_SAMPLING_RATE 48000
@@ -167,8 +174,10 @@ struct stream_out {
     bool standby;
     uint64_t written;
     struct audio_device *dev;
+#ifdef USE_PULSE_SOCKET
     int sock;
     int64_t last_write_time_us;
+#endif
 };
 
 struct stream_in {
@@ -182,8 +191,10 @@ struct stream_in {
     bool standby;
 
     struct audio_device *dev;
+#ifdef USE_PULSE_SOCKET
     int sock;
     int64_t last_read_time_us;
+#endif
 };
 
 static uint32_t out_get_sample_rate(const struct audio_stream *stream);
@@ -234,10 +245,12 @@ static void do_out_standby(struct stream_out *out)
         }
         out->pcm = NULL;
         adev->active_out = NULL;
+#ifdef USE_PULSE_SOCKET
         if(out->sock > 0){
             close(out->sock);
             out->sock = 0;
         }
+#endif
         out->standby = true;
     }
 }
@@ -252,10 +265,12 @@ static void do_in_standby(struct stream_in *in)
         }
         in->pcm = NULL;
         adev->active_in = NULL;
+#ifdef USE_PULSE_SOCKET
         if(in->sock > 0){
             close(in->sock);
             in->sock = 0;
         }
+#endif
         in->standby = true;
     }
 }
@@ -309,6 +324,7 @@ static int start_output_stream(struct stream_out *out)
     } else {
         adev->card = get_pcm_card("Dummy");
     }
+#ifdef USE_PULSE_SOCKET
     struct sockaddr_un serv_addr;
     if(out->sock <= 0){
         out->sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -328,7 +344,9 @@ static int start_output_stream(struct stream_out *out)
             }
         }
     }
-    if(out->sock <= 0){
+    if(out->sock <= 0)
+#endif
+    {
 //[BT SCO VoIP Call
         if(adev->in_sco_voip_call) {
             ALOGD("%s : sco voip call active", __func__);
@@ -373,9 +391,10 @@ static int start_input_stream(struct stream_in *in)
     } else {
         adev->cardc = get_pcm_card("Dummy");
     }
-	struct sockaddr_un serv_addr;
-	if(in->sock <= 0)
-	{
+#ifdef USE_PULSE_SOCKET
+    struct sockaddr_un serv_addr;
+    if(in->sock <= 0)
+    {
         in->sock = socket(AF_UNIX, SOCK_STREAM, 0);
         if(in->sock < 0)
         {
@@ -392,7 +411,9 @@ static int start_input_stream(struct stream_in *in)
         }
     }
 
-	if(in->sock <= 0) {
+    if(in->sock <= 0)
+#endif
+    {
 //[BT SCO VoIP Call
         if(adev->in_sco_voip_call) {
             ALOGD("%s : sco voip call active", __func__);
@@ -711,6 +732,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         free(buf_remapped);
 //BT SCO VoIP Call]
     } else {
+#ifdef USE_PULSE_SOCKET
         if(out->sock > 0) {
             ret = send(out->sock , out_buffer , bytes , 0 );
             struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
@@ -727,7 +749,9 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
             }
             ALOGV("Sleep for %llu ms sample_rate %d, ret = %d", sleep_time, out->pcm_config->rate, ret);
             out->last_write_time_us = now + sleep_time;
-        } else {
+        } else
+#endif
+        {
             /* Normal pcm out to primary card */
             ret = pcm_write(out->pcm, out_buffer, out_frames * frame_size);
         }
@@ -789,12 +813,14 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
             }
         }
     }
+#ifdef USE_PULSE_SOCKET
     else if(out->sock > 0) {
         *frames = out->written;
         clock_gettime(CLOCK_MONOTONIC, timestamp);
         ret = 0;
     }
     ALOGV("%s OUT : frames : %lld timestamp.tv_nsec : %ld ", __func__, *frames, timestamp->tv_nsec);
+#endif
 
     return ret;
 }
@@ -878,7 +904,9 @@ static int in_standby(struct audio_stream *stream)
     pthread_mutex_lock(&in->dev->lock);
     pthread_mutex_lock(&in->lock);
     do_in_standby(in);
+#ifdef USE_PULSE_SOCKET
     in->last_read_time_us = 0;
+#endif
     pthread_mutex_unlock(&in->lock);
     pthread_mutex_unlock(&in->dev->lock);
 
@@ -1093,6 +1121,7 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
         free(buf_remapped);
 //BT SCO VoIP Call]
     } else {
+#ifdef USE_PULSE_SOCKET
         if(in->sock >0) {
             ret = recv(in->sock , buffer , bytes , 0 );
             size_t frame_size = audio_stream_in_frame_size(stream);
@@ -1112,7 +1141,9 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
             }
             ALOGV("Sleep for %llu ms sample_rate %d, ret = %d", sleep_time, in->pcm_config->rate, ret);
             in->last_read_time_us = now + sleep_time;
-        } else {
+        } else
+#endif
+        {
             /* pcm read for primary card */
             ret = pcm_read(in->pcm, buffer, bytes);
         }
@@ -1226,7 +1257,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
 //       make a copy of requested config to feed it back if requested.
     memcpy(&out->req_config, config, sizeof(struct audio_config));
+#ifdef USE_PULSE_SOCKET
     out->sock = 0;
+#endif
 
     out->dev = adev;
     out->standby = true;
@@ -1471,7 +1504,9 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
 //       make a copy of requested config to feed it back if requested.
     memcpy(&in->req_config, config, sizeof(struct audio_config));
+#ifdef USE_PULSE_SOCKET
     in->sock = 0;
+#endif
 
     *stream_in = &in->stream;
     return 0;
