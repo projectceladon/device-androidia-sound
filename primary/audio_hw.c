@@ -572,7 +572,7 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, out->req_config.sample_rate);
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -583,7 +583,7 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
             (out->req_config.channel_mask == AUDIO_CHANNEL_OUT_MONO ? "AUDIO_CHANNEL_OUT_MONO" : "AUDIO_CHANNEL_OUT_STEREO"));
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -747,7 +747,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
                 // we don't sleep when we exit standby (this is typical for a real alsa buffer).
                 sleep_time = 0;
             }
-            ALOGV("Sleep for %llu ms sample_rate %d, ret = %d", sleep_time, out->pcm_config->rate, ret);
+            ALOGV("Sleep for %ld ms sample_rate %d, ret = %d", (long)sleep_time, out->pcm_config->rate, ret);
             out->last_write_time_us = now + sleep_time;
         } else
 #endif
@@ -819,7 +819,7 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
         clock_gettime(CLOCK_MONOTONIC, timestamp);
         ret = 0;
     }
-    ALOGV("%s OUT : frames : %lld timestamp.tv_nsec : %ld ", __func__, *frames, timestamp->tv_nsec);
+    ALOGV("%s OUT : frames : %ld timestamp.tv_nsec : %ld ", __func__, (long)*frames, timestamp->tv_nsec);
 #endif
 
     return ret;
@@ -873,7 +873,7 @@ static size_t in_get_buffer_size(const struct audio_stream *stream)
     size = ((size + 15) / 16) * 16;
 
     size *= audio_stream_in_frame_size(&in->stream);
-    ALOGV("%s : buffer_size : %d",__func__, size);
+    ALOGV("%s : buffer_size : %zu",__func__, size);
     return size;
 }
 
@@ -974,7 +974,7 @@ static char * in_get_parameters(const struct audio_stream *stream,
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, in->req_config.sample_rate);
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -985,7 +985,7 @@ static char * in_get_parameters(const struct audio_stream *stream,
             (in->req_config.channel_mask == AUDIO_CHANNEL_IN_MONO ? "AUDIO_CHANNEL_IN_MONO" : "AUDIO_CHANNEL_IN_STEREO"));
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -1124,8 +1124,9 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
 #ifdef USE_PULSE_SOCKET
         if(in->sock >0) {
             ret = recv(in->sock , buffer , bytes , 0 );
-            size_t frame_size = audio_stream_in_frame_size(stream);
-            unsigned int in_frames = bytes / frame_size;
+	    //unused variable in_frames
+            //size_t frame_size = audio_stream_in_frame_size(stream);
+            //unsigned int in_frames = bytes / frame_size;
             struct timespec t = { .tv_sec = 0, .tv_nsec = 0 };
             clock_gettime(CLOCK_MONOTONIC, &t);
             const int64_t now = (t.tv_sec * 1000000000LL + t.tv_nsec) / 1000;
@@ -1139,7 +1140,7 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
             } else {
                 sleep_time = 0;
             }
-            ALOGV("Sleep for %llu ms sample_rate %d, ret = %d", sleep_time, in->pcm_config->rate, ret);
+            ALOGV("Sleep for %ld ms sample_rate %d, ret = %d", (long)sleep_time, in->pcm_config->rate, ret);
             in->last_read_time_us = now + sleep_time;
         } else
 #endif
@@ -1362,7 +1363,7 @@ static char * adev_get_parameters(const struct audio_hw_device *dev __unused,
     ret = str_parms_get_str(query, AUDIO_PARAMETER_KEY_TTY_MODE, value, sizeof(value));
     if(ret >= 0) {
         ALOGE("%s : no support of TTY",__func__);
-        str_parms_destroy(query);
+        str_parms_destroy((struct str_parms *)query);
         return NULL;
     }
 
@@ -1643,7 +1644,7 @@ static int adev_open(const hw_module_t* module, const char* name,
 //    size_t size = (pcm_config_in.rate * IN_PERIOD_MS * SAMPLE_SIZE_IN_BYTES_STEREO) / 1000;
 //    pcm_config_in.period_size = size;
 
-    ALOGI("%s : will use input [rate : period] as [%d : %zu] for %s variants", __func__, pcm_config_in.rate, pcm_config_in.period_size, product);
+    ALOGI("%s : will use input [rate : period] as [%d : %u] for %s variants", __func__, pcm_config_in.rate, pcm_config_in.period_size, product);
 
 //[BT SCO VoIP Call
     update_bt_card(adev);
