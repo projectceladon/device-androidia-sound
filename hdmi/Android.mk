@@ -37,6 +37,18 @@ LOCAL_C_INCLUDES += \
 
 LOCAL_SHARED_LIBRARIES := liblog libcutils libtinyalsa
 
+LOCAL_CFLAGS :=\
+ -fno-strict-overflow \
+ -fwrapv \
+ -D_FORTIFY_SOURCE=2 \
+ -fstack-protector-strong \
+ -Wno-conversion-null \
+ -Wnull-dereference \
+ -Werror \
+ -Warray-bounds \
+ -Wformat -Wformat-security \
+ -Werror=format-security 
+
 LOCAL_PROPRIETARY_MODULE := true
 LOCAL_MODULE := audio.hdmi.$(TARGET_BOARD_PLATFORM)
 LOCAL_MODULE_TAGS := optional
