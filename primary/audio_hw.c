@@ -57,8 +57,8 @@
 #define PCM_DEVICE 0
 
 #ifdef USE_PULSE_SOCKET
-#define CIC_SOCKET_OUT "/data/misc/audio/cic_pulseaudio_out.socket"
-#define CIC_SOCKET_IN "/data/misc/audio/cic_pulseaudio_in.socket"
+#define CIC_SOCKET_OUT "/ipc/config/audio/cic_pulseaudio_out.socket"
+#define CIC_SOCKET_IN "/ipc/config/audio/cic_pulseaudio_in.socket"
 #endif
 
 #define OUT_PERIOD_SIZE 4800
