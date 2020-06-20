@@ -69,7 +69,9 @@
 #define UNUSED_PARAMETER(x)        (void)(x)
 
 #define DEFAULT_CARD               0
+
 #define DEFAULT_DEVICE             3
+#define DEFAULT_DEVICE_EHL         7
 
 /*this is used to avoid starvation*/
 #define LATENCY_TO_BUFFER_SIZE_RATIO 2
@@ -225,15 +227,23 @@ static int start_output_stream(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
     struct pcm_params *params;
-	int device = 0;
+    int device = 0;
 
     ALOGV("%s enter",__func__);
 
     if ((adev->card < 0) || (adev->device < 0)){
+        char value[PROPERTY_VALUE_MAX];
+
         /*this will be updated once the hot plug intent
           sends these information.*/
         adev->card = DEFAULT_CARD;
-        adev->device = DEFAULT_DEVICE;
+        property_get("ro.vendor.hdmi.audio", value, "0");
+        if (!strcmp(value,"ehl")) {
+            adev->device = DEFAULT_DEVICE_EHL;
+        } else {
+            adev->device = DEFAULT_DEVICE;
+        }
+
         ALOGV("%s : Setting default card/ device %d,%d",__func__,adev->card,adev->device);
     }
 
@@ -260,7 +270,7 @@ static int start_output_stream(struct stream_out *out)
    
     
     ALOGD("%s: HDMI card number = %d, device = %d",__func__,adev->card,adev->device);
-    out->pcm = pcm_open(adev->card, DEFAULT_DEVICE, PCM_OUT, &out->pcm_config);
+    out->pcm = pcm_open(adev->card, adev->device, PCM_OUT, &out->pcm_config);
 
     if (out->pcm && !pcm_is_ready(out->pcm)) {
         ALOGE("pcm_open() failed: %s", pcm_get_error(out->pcm));
