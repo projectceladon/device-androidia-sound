@@ -35,6 +35,18 @@ LOCAL_C_INCLUDES += \
 	$(call include-path-for, audio-route) \
 	$(call include-path-for, audio-effects)
 
+LOCAL_CFLAGS :=\
+ -fno-strict-overflow \
+ -fwrapv \
+ -D_FORTIFY_SOURCE=2 \
+ -fstack-protector-strong \
+ -Wno-conversion-null \
+ -Wnull-dereference \
+ -Werror \
+ -Warray-bounds \
+ -Wformat -Wformat-security \
+ -Werror=format-security
+
 #Preferred paths for all vendor hals /vendor/lib/hw
 LOCAL_PROPRIETARY_MODULE := true
 

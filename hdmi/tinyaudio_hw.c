@@ -323,7 +323,7 @@ static size_t out_get_buffer_size(const struct audio_stream *stream)
        buf_size/=LATENCY_TO_BUFFER_SIZE_RATIO;
     }
 
-    ALOGV("%s: buf_size: %d, period_size : %d, frame_size : %d",
+    ALOGV("%s: buf_size: %d, period_size : %d, frame_size : %zu",
         __func__,
         buf_size,
         out->pcm_config.period_size,
@@ -595,7 +595,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     int32_t* dstbuff = NULL;
     int outbytes = 0;
 
-    ALOGV("%s enter for bytes = %d channels = %d",__func__,bytes, out->pcm_config.channels);
+    ALOGV("%s enter for bytes = %zu channels = %d",__func__,bytes, out->pcm_config.channels);
 
     pthread_mutex_lock(&out->dev->lock);
     pthread_mutex_lock(&out->lock);
@@ -641,7 +641,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     else
       ret = pcm_write(out->pcm, (void *)buffer, bytes);
 
-    ALOGV("pcm_write: %s done for %d input bytes, output bytes = %d ", pcm_get_error(out->pcm),bytes,outbytes);
+    ALOGV("pcm_write: %s done for %zu input bytes, output bytes = %d ", pcm_get_error(out->pcm),bytes,outbytes);
 
     free(dstbuff);
 

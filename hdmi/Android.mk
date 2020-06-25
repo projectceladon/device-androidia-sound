@@ -35,6 +35,18 @@ LOCAL_SRC_FILES := \
 LOCAL_C_INCLUDES += \
     external/tinyalsa/include
 
+LOCAL_CFLAGS :=\
+ -fno-strict-overflow \
+ -fwrapv \
+ -D_FORTIFY_SOURCE=2 \
+ -fstack-protector-strong \
+ -Wno-conversion-null \
+ -Wnull-dereference \
+ -Werror \
+ -Warray-bounds \
+ -Wformat -Wformat-security \
+ -Werror=format-security
+
 LOCAL_SHARED_LIBRARIES := liblog libcutils libtinyalsa
 
 LOCAL_PROPRIETARY_MODULE := true

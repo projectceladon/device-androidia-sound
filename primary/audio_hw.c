@@ -479,7 +479,7 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, out->req_config.sample_rate);
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -490,7 +490,7 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
             (out->req_config.channel_mask == AUDIO_CHANNEL_OUT_MONO ? "AUDIO_CHANNEL_OUT_MONO" : "AUDIO_CHANNEL_OUT_STEREO"));
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -751,7 +751,7 @@ static size_t in_get_buffer_size(const struct audio_stream *stream)
     size = ((size + 15) / 16) * 16;
 
     size *= audio_stream_in_frame_size(&in->stream);
-    ALOGV("%s : buffer_size : %d",__func__, size);
+    ALOGV("%s : buffer_size : %zu",__func__, size);
     return size;
 }
 
@@ -849,7 +849,7 @@ static char * in_get_parameters(const struct audio_stream *stream,
         str_parms_add_int(reply, AUDIO_PARAMETER_STREAM_SUP_SAMPLING_RATES, in->req_config.sample_rate);
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -860,7 +860,7 @@ static char * in_get_parameters(const struct audio_stream *stream,
             (in->req_config.channel_mask == AUDIO_CHANNEL_IN_MONO ? "AUDIO_CHANNEL_IN_MONO" : "AUDIO_CHANNEL_IN_STEREO"));
 
         if(str_parm != NULL)
-            str_parms_destroy(str_parm);
+            str_parms_destroy((struct str_parms *)str_parm);
 
         str_parm = str_parms_to_str(reply);
     }
@@ -1502,7 +1502,7 @@ static int adev_open(const hw_module_t* module, const char* name,
     size_t size = (pcm_config_in.rate * IN_PERIOD_MS * SAMPLE_SIZE_IN_BYTES_STEREO) / 1000;
     pcm_config_in.period_size = size;
 
-    ALOGI("%s : will use input [rate : period] as [%d : %zu] for %s variants", __func__, pcm_config_in.rate, pcm_config_in.period_size, product);
+    ALOGI("%s : will use input [rate : period] as [%d : %u] for %s variants", __func__, pcm_config_in.rate, pcm_config_in.period_size, product);
 
 //[BT SCO VoIP Call
     update_bt_card(adev);
