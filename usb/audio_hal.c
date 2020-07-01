@@ -41,6 +41,7 @@
 #include "alsa_device_profile.h"
 #include "alsa_device_proxy.h"
 #include "alsa_logging.h"
+#include <audio_route/audio_route.h>
 
 //[ BT-HFP
 #include <audio_utils/channels.h>
@@ -209,6 +210,21 @@ struct pcm_config usb_hfp_config = {
     .silence_size = 0,
     .avail_min = 0
 };
+
+static void apply_mixer_settings(int card)
+{
+    char mixer_path[PATH_MAX];
+    struct audio_route *ar;
+
+    sprintf(mixer_path, "/vendor/etc/mixer_paths_usb.xml");
+    ar = audio_route_init(card, mixer_path);
+    if (!ar) {
+        ALOGE("Failed to init audio route controls for card %d", card);
+        return;
+    }
+    audio_route_apply_path(ar, "usb_headset");
+    audio_route_free(ar);
+}
 
 static unsigned int round_to_16_mult(unsigned int size)
 {
@@ -762,6 +778,9 @@ static int adev_open_output_stream(struct audio_hw_device *hw_dev,
     adev_add_stream_to_list(out->adev, &out->adev->output_stream_list, &out->list_node);
 
     *stream_out = &out->stream;
+
+    // Apply mixer controls
+    apply_mixer_settings(out->adev->out_profile.card);
 
     return ret;
 }
