@@ -216,7 +216,7 @@ static void apply_mixer_settings(int card)
     char mixer_path[PATH_MAX];
     struct audio_route *ar;
 
-    sprintf(mixer_path, "/vendor/etc/mixer_paths_usb.xml");
+    snprintf(mixer_path,PATH_MAX, "/vendor/etc/mixer_paths_usb.xml");
     ar = audio_route_init(card, mixer_path);
     if (!ar) {
         ALOGE("Failed to init audio route controls for card %d", card);
