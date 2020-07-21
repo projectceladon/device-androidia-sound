@@ -25,6 +25,7 @@ LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libcutils \
 	libaudioutils \
+	libsafestring \
 	libtinyalsa \
 	libaudioroute \
 	libdl
