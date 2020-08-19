@@ -29,6 +29,18 @@ LOCAL_SHARED_LIBRARIES := \
 	libaudioroute \
 	libdl
 
+LOCAL_CFLAGS :=\
+ -fno-strict-overflow \
+ -fwrapv \
+ -D_FORTIFY_SOURCE=2 \
+ -fstack-protector-strong \
+ -Wno-conversion-null \
+ -Wnull-dereference \
+ -Werror \
+ -Warray-bounds \
+ -Wformat -Wformat-security \
+ -Werror=format-security 
+
 LOCAL_C_INCLUDES += \
 	external/tinyalsa/include \
 	$(call include-path-for, audio-utils) \
