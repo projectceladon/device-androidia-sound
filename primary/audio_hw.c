@@ -252,6 +252,8 @@ static void do_out_standby(struct stream_out *out)
         }
 #endif
         out->standby = true;
+        close(out->sock);
+        out->sock = -1;
     }
 }
 
@@ -272,6 +274,8 @@ static void do_in_standby(struct stream_in *in)
         }
 #endif
         in->standby = true;
+        close(in->sock);
+        in->sock = -1;
     }
 }
 
