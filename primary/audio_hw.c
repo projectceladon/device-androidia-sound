@@ -30,9 +30,6 @@
 #include <cutils/properties.h>
 #include <cutils/str_parms.h>
 
-#include <safe_mem_lib.h>
-#include <safe_str_lib.h>
-
 #include <hardware/audio.h>
 #include <hardware/hardware.h>
 
@@ -50,8 +47,8 @@
 #define PCM_CARD_DEFAULT 0
 #define PCM_DEVICE 0
 
-#define OUT_PERIOD_SIZE 480
-#define OUT_PERIOD_COUNT 2
+#define OUT_PERIOD_SIZE 1024
+#define OUT_PERIOD_COUNT 4
 #define OUT_SAMPLING_RATE 48000
 
 #define IN_PERIOD_SIZE 1024 //default period size
@@ -594,7 +591,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         memset(buf_remapped, 0, buf_size_remapped);
         memset(buf_out, 0, buf_size_out);
 
-        memcpy_s(buf_in,buf_size_in, buffer, buf_size_in);
+        memcpy(buf_in, buffer, buf_size_in);
 
 #ifdef DEBUG_PCM_DUMP
         if(sco_call_write != NULL) {
@@ -992,7 +989,7 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
         }
 #endif
 
-        memcpy_s(buffer,buf_size_out, buf_out, buf_size_out);
+        memcpy(buffer, buf_out, buf_size_out);
 
         free(buf_in);
         free(buf_out);
