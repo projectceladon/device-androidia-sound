@@ -15,7 +15,7 @@
  */
 
 #define LOG_TAG "audio_hw_primary"
-/*#define LOG_NDEBUG 0*/
+#define LOG_NDEBUG 0
 
 #include <dirent.h>
 #include <errno.h>
@@ -65,7 +65,7 @@
 #define SAMPLE_SIZE_IN_BYTES          2
 #define SAMPLE_SIZE_IN_BYTES_STEREO   4
 
-//#define DEBUG_PCM_DUMP
+#define DEBUG_PCM_DUMP
 
 #ifdef DEBUG_PCM_DUMP
 // To enable dumps, explicitly create "/vendor/dump/" folder and reboot device
@@ -560,6 +560,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 
 //[BT SCO VoIP Call
     if(adev->in_sco_voip_call) {
+        ALOGD("Entering sco call in function %s", __func__);
         /* VoIP pcm write in celadon devices goes to bt alsa card */
         size_t frames_in = round_to_16_mult(out->pcm_config->period_size);
         size_t frames_out = round_to_16_mult(bt_out_config.period_size);
@@ -590,15 +591,18 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
             }
         }
 
+        ALOGD("LOG1 in  %s", __func__);
         memset(buf_in, 0, buf_size_in);
         memset(buf_remapped, 0, buf_size_remapped);
         memset(buf_out, 0, buf_size_out);
 
         memcpy_s(buf_in,buf_size_in, buffer, buf_size_in);
 
+        ALOGD("LOG2 in  %s", __func__);
 #ifdef DEBUG_PCM_DUMP
         if(sco_call_write != NULL) {
             fwrite(buf_in, 1, buf_size_in, sco_call_write);
+            ALOGD("dumping  %s", __func__);
         } else {
             ALOGD("%s : sco_call_write was NULL, no dump", __func__);
         }
@@ -607,7 +611,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
         adjust_channels(buf_in, out->pcm_config->channels, buf_remapped, bt_out_config.channels, 
                                         SAMPLE_SIZE_IN_BYTES, buf_size_in);
 
-        //ALOGV("remapping : [%d -> %d]", out->pcm_config->channels, bt_out_config.channels);
+        ALOGV("remapping : [%d -> %d]", out->pcm_config->channels, bt_out_config.channels);
 
 #ifdef DEBUG_PCM_DUMP
         if(sco_call_write_remapped != NULL) {
@@ -619,7 +623,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 
         if(adev->voip_out_resampler != NULL) {
             adev->voip_out_resampler->resample_from_input(adev->voip_out_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
-            //ALOGV("%s : upsampling [%d -> %d]",__func__, out->pcm_config->rate, bt_out_config.rate);
+            ALOGV("%s : upsampling [%d -> %d]",__func__, out->pcm_config->rate, bt_out_config.rate);
         }
 
         ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
