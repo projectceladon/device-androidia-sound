@@ -72,6 +72,7 @@
 
 #define DEFAULT_DEVICE             3
 #define DEFAULT_DEVICE_EHL         7
+#define DEFAULT_DEVICE_TGL         11
 
 /*this is used to avoid starvation*/
 #define LATENCY_TO_BUFFER_SIZE_RATIO 2
@@ -240,6 +241,8 @@ static int start_output_stream(struct stream_out *out)
         property_get("ro.vendor.hdmi.audio", value, "0");
         if (!strcmp(value,"ehl")) {
             adev->device = DEFAULT_DEVICE_EHL;
+        } else if (!strcmp(value,"tgl")) {
+            adev->device = DEFAULT_DEVICE_TGL;
         } else {
             adev->device = DEFAULT_DEVICE;
         }
