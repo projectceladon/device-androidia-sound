@@ -54,6 +54,7 @@
 #include <stdint.h>
 #include <sys/time.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <cutils/log.h>
 #include <cutils/str_parms.h>
@@ -72,6 +73,9 @@
 
 #define DEFAULT_DEVICE             3
 #define DEFAULT_DEVICE_EHL         7
+#define DEFAULT_DEVICE_BM          11
+
+#define MAX_HDMI_DEVICES         20
 
 /*this is used to avoid starvation*/
 #define LATENCY_TO_BUFFER_SIZE_RATIO 2
@@ -111,6 +115,7 @@ struct pcm_config pcm_config_default = {
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
 };
+static int parse_hdmi_device_number();
 
 #define CHANNEL_MASK_MAX 3
 struct audio_device {
@@ -228,23 +233,27 @@ static int start_output_stream(struct stream_out *out)
     struct audio_device *adev = out->dev;
     struct pcm_params *params;
     int device = 0;
-
+    int check_device =0;
     ALOGV("%s enter",__func__);
 
     if ((adev->card < 0) || (adev->device < 0)){
         char value[PROPERTY_VALUE_MAX];
-
+ 
         /*this will be updated once the hot plug intent
           sends these information.*/
-        adev->card = DEFAULT_CARD;
+        adev->card = DEFAULT_CARD; 
+        adev->device = parse_hdmi_device_number();
+        /*Keeping the condtion check only for EHL, as it is not verified*/   
         property_get("ro.vendor.hdmi.audio", value, "0");
         if (!strcmp(value,"ehl")) {
             adev->device = DEFAULT_DEVICE_EHL;
-        } else {
-            adev->device = DEFAULT_DEVICE;
+            ALOGV("%s : Setting default card/ device %d,%d",__func__,adev->card,adev->device);
         }
-
-        ALOGV("%s : Setting default card/ device %d,%d",__func__,adev->card,adev->device);
+        else if(!strcmp(value,"bm"))
+            ALOGV("check if the device is BM"); 
+            adev->device = DEFAULT_DEVICE_BM;
+        else
+            adev->device = DEFAULT_DEVICE;
     }
 
     ALOGV("%s enter %d,%d,%d,%d,%d",__func__,
@@ -269,7 +278,7 @@ static int start_output_stream(struct stream_out *out)
     adev->card = get_card_number_by_name("PCH");
    
     
-    ALOGD("%s: HDMI card number = %d, device = %d",__func__,adev->card,adev->device);
+    ALOGE("%s: HDMI card number = %d, device = %d",__func__,adev->card,adev->device);
     out->pcm = pcm_open(adev->card, adev->device, PCM_OUT, &out->pcm_config);
 
     if (out->pcm && !pcm_is_ready(out->pcm)) {
@@ -282,8 +291,8 @@ static int start_output_stream(struct stream_out *out)
     activePcm = out->pcm;
     activeChannel = out->pcm_config.channels;
 
-    ALOGV("Initialized PCM device for channels %d handle = %d",out->pcm_config.channels, (int)activePcm);
-    ALOGV("%s exit",__func__);
+    ALOGE("Initialized PCM device for channels %d handle = %d",out->pcm_config.channels, (int)activePcm);
+    ALOGE("%s exit",__func__);
     return 0;
 }
 
@@ -419,7 +428,53 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
     ALOGV("%s exit",__func__);
     return 0;
 }
+static int parse_hdmi_device_number()
+{
+    struct mixer *mixer;
+    int card = 0;
+    struct mixer_ctl *ctl;
+    enum mixer_ctl_type mixer_type;
+    unsigned int num_values;
+    unsigned int i,id,j;
+    bool device_status;
 
+    ALOGE("%s enter",__func__);
+    card = get_card_number_by_name("PCH"); 
+    mixer = mixer_open(card);
+    if (!mixer) {
+        ALOGE(" Failed to open mixer\n");
+        return -1;
+    }
+    for(i=0; i < MAX_HDMI_DEVICES; i++ ) {
+       char ctl_name[100] ;
+       enum mixer_ctl_type type;
+       unsigned int num_values;
+       sprintf(ctl_name, "HDMI/DP,pcm=%d Jack", i);
+       ALOGE("ctl_name %s",ctl_name);
+       ctl = mixer_get_ctl_by_name(mixer, ctl_name);
+       if(ctl) {
+           type = mixer_ctl_get_type(ctl);
+           num_values = mixer_ctl_get_num_values(ctl);  
+           for (j = 0; j < num_values; j++) {
+           switch (type){
+               case MIXER_CTL_TYPE_BOOL:
+               ALOGE("mixer_ctl_get_value %s", mixer_ctl_get_value(ctl, j) ? "On" : "Off");
+               if(mixer_ctl_get_value(ctl, 1)){
+                   ALOGE("status of device %d is ON",i);
+                   ALOGE("%s exit",__func__);
+                   return i;
+               }
+               break;
+               default:
+               printf("expected bool but its unknown");
+               break;
+           }
+         }   
+      }
+    }
+    ALOGE("%s exit",__func__);
+    return DEFAULT_DEVICE;
+}
 static int parse_channel_map()
 {
     struct mixer *mixer;
