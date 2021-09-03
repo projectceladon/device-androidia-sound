@@ -1169,6 +1169,7 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
 
 //[BT SCO VoIP Call
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_BT_SCO, value, sizeof(value));
+    ret = -1;
     if (ret >= 0) {
         pthread_mutex_lock(&adev->lock);
         if (strcmp(value, "on") == 0){
