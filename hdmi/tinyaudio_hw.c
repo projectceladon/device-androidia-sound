@@ -69,7 +69,7 @@
 #define UNUSED_PARAMETER(x)        (void)(x)
 
 #define DEFAULT_CARD               0
-
+#define DEFAULT_DEVICE_BM          11   
 #define DEFAULT_DEVICE             3
 #define DEFAULT_DEVICE_EHL         7
 
@@ -243,6 +243,7 @@ static int start_output_stream(struct stream_out *out)
         } else {
             adev->device = DEFAULT_DEVICE;
         }
+        adev->device = DEFAULT_DEVICE_BM;
 
         ALOGV("%s : Setting default card/ device %d,%d",__func__,adev->card,adev->device);
     }
