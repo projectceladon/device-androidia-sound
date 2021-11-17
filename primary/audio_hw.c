@@ -15,7 +15,7 @@
  */
 
 #define LOG_TAG "audio_hw_primary"
-/*#define LOG_NDEBUG 0*/
+#define LOG_NDEBUG 0
 
 #include <dirent.h>
 #include <errno.h>
@@ -293,16 +293,18 @@ static int start_output_stream(struct stream_out *out)
         out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
 //BT SCO VoIP Call]
     } else {
-        ALOGI("PCM playback card selected = %d, \n", adev->card);
+        ALOGI("Before PCM playback card selected = %d, \n", adev->card);
         out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
+        ALOGI("After PCM playback card selected = %d, \n", adev->card);
     }
 
     if (!out->pcm) {
         ALOGE("pcm_open(out) failed: device not found");
         return -ENODEV;
     } else if (!pcm_is_ready(out->pcm)) {
-        ALOGE("pcm_open(out) failed: %s", pcm_get_error(out->pcm));
+        ALOGE("Before: pcm_open(out) failed: %s", pcm_get_error(out->pcm));
         pcm_close(out->pcm);
+        ALOGE("After: pcm_open(out) failed: %s", pcm_get_error(out->pcm));
         out->unavailable = true;
         return -ENOMEM;
     }
@@ -336,13 +338,16 @@ static int start_input_stream(struct stream_in *in)
             in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
 
         in->pcm = pcm_open(adev->cardc, PCM_DEVICE, PCM_IN, in->pcm_config);
+        ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
+            in->pcm_config->rate, in->pcm_config->format, in->pcm_config->channels);
     }
 
     if (!in->pcm) {
         return -ENODEV;
     } else if (!pcm_is_ready(in->pcm)) {
-        ALOGE("pcm_open(in) failed: %s", pcm_get_error(in->pcm));
+        ALOGE("Before pcm_open(in) failed: %s", pcm_get_error(in->pcm));
         pcm_close(in->pcm);
+        ALOGE("After pcm_open(in) failed: %s", pcm_get_error(in->pcm));
         return -ENOMEM;
     }
 
@@ -354,7 +359,7 @@ static int start_input_stream(struct stream_in *in)
     return 0;
 }
 
-/* API functions */
+/* API functions *//
 
 static uint32_t out_get_sample_rate(const struct audio_stream *stream)
 {
