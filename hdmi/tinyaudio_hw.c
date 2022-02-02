@@ -109,7 +109,7 @@ const struct channel_list channel_list_table[] = {
 
 struct pcm_config pcm_config_default = {
     .channels = 2,
-    .rate = 44100,
+    .rate = 48000,
     .period_size = 1024,
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
@@ -270,7 +270,7 @@ static int start_output_stream(struct stream_out *out)
 
     /*TODO - this needs to be updated once the device connect intent sends
       card, device id*/
-    adev->card = get_card_number_by_name("PCH");
+    adev->card = get_card_number_by_name("sofhdadsp");
    
     
     ALOGD("%s: HDMI card number = %d, device = %d",__func__,adev->card,adev->device);
@@ -434,7 +434,7 @@ static int parse_hdmi_device_number()
     bool device_status;
 
     ALOGV("%s enter",__func__);
-    card = get_card_number_by_name("PCH"); 
+    card = get_card_number_by_name("sofhdadsp");
     mixer = mixer_open(card);
     if (!mixer) {
         ALOGE(" Failed to open mixer\n");
@@ -483,7 +483,7 @@ static int parse_channel_map()
 
     enable_multi = property_get_bool("vendor.audio.hdmi_multichannel", false);
 
-    card = get_card_number_by_name("PCH");
+    card = get_card_number_by_name("sofhdadsp");
     mixer = mixer_open(card);
     if (!mixer) {
         ALOGE("[EDID] Failed to open mixer\n");
