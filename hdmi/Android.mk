@@ -36,7 +36,6 @@ LOCAL_C_INCLUDES += \
     external/tinyalsa/include
 
 LOCAL_CFLAGS :=\
- -fno-strict-overflow \
  -fwrapv \
  -D_FORTIFY_SOURCE=2 \
  -fstack-protector-strong \
