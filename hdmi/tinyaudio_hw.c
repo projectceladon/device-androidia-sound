@@ -109,7 +109,7 @@ const struct channel_list channel_list_table[] = {
 
 struct pcm_config pcm_config_default = {
     .channels = 2,
-    .rate = 44100,
+    .rate = 48000,
     .period_size = 1024,
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
@@ -167,8 +167,13 @@ static int get_card_number_by_name(const char* name)
 
     written = readlink(id_filepath, number_filepath, sizeof(number_filepath));
     if (written < 0) {
-        ALOGE("Sound card %s does not exist - setting default", name);
-        return DEFAULT_CARD;
+        ALOGE("Sound card PCH does not exist - checking for sofhdadsp sound card");
+        snprintf(id_filepath, sizeof(id_filepath), "/proc/asound/%s", "sofhdadsp");
+        written = readlink(id_filepath, number_filepath, sizeof(number_filepath));
+        if (written < 0) {
+            ALOGE("Sound card %s does not exist - setting default", name);
+            return DEFAULT_CARD;
+	}
     } else if (written >= (ssize_t)sizeof(id_filepath)) {
         ALOGE("Sound card %s name is too long - setting default", name);
         return DEFAULT_CARD;
