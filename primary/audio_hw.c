@@ -15,7 +15,7 @@
  */
 
 #define LOG_TAG "audio_hw_primary"
-/*#define LOG_NDEBUG 0*/
+#define LOG_NDEBUG 0
 
 #include <dirent.h>
 #include <errno.h>
@@ -247,16 +247,19 @@ static int get_pcm_card(const char* name)
         char number_filepath[PATH_MAX] = {0};
         ssize_t written;
 
+        ALOGI("In func %s", __func__);
         snprintf(id_filepath, sizeof(id_filepath), "/proc/asound/%s", name);
 
         written = readlink(id_filepath, number_filepath, sizeof(number_filepath));
         if (written < 0) {
-            ALOGE("Sound card %s does not exist - setting default", name);
+            ALOGI("Sound card %s does not exist - setting default", name);
                 return 0;
         } else if (written >= (ssize_t)sizeof(id_filepath)) {
-            ALOGE("Sound card %s name is too long - setting default", name);
+            ALOGI("Sound card %s name is too long - setting default", name);
             return 0;
         }
+        ALOGI("id_filepath is %s ", id_filepath);
+        ALOGI("number_filepath is %s", number_filepath);
 
         return atoi(number_filepath + 4);
 }
@@ -293,7 +296,7 @@ static int start_output_stream(struct stream_out *out)
         out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
 //BT SCO VoIP Call]
     } else {
-        ALOGI("PCM playback card selected = %d, \n", adev->card);
+        ALOGI("PCM playback card selected = %d, PATH_MAX is %d\n", adev->card, PATH_MAX);
         out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
     }
 
@@ -1064,13 +1067,15 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 
     int ret;
 
-    params = pcm_params_get(PCM_CARD_DEFAULT, PCM_DEVICE, PCM_OUT);
-
-    if(params != NULL) {
-       adev->card = PCM_CARD_DEFAULT;
-    } else {
-        adev->card = get_pcm_card("Dummy");
+    adev->card = get_pcm_card("PCH");
+    params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+    if(params == NULL) {
+        adev->card = get_pcm_card("sofhdadsp");
         params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+        if (params == NULL) {
+            adev->card = get_pcm_card("Dummy");
+            params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+        }
     }
 
     ALOGI("PCM playback card selected = %d, \n", adev->card);
@@ -1318,7 +1323,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
                                   audio_source_t source __unused)
 
 {
-    ALOGD("%s : requested config : [rate %d format %d channels %d flags %#x]",__func__,
+    ALOGI("%s : requested config : [rate %d format %d channels %d flags %#x]",__func__,
         config->sample_rate, config->format, popcount(config->channel_mask), flags);
 
     struct audio_device *adev = (struct audio_device *)dev;
@@ -1329,14 +1334,18 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 
     params = pcm_params_get(PCM_CARD_DEFAULT, PCM_DEVICE, PCM_IN);
 
-    if(params != NULL) {
-        adev->cardc = PCM_CARD_DEFAULT;
-    } else {
-        adev->cardc = get_pcm_card("Dummy");
+    adev->cardc = get_pcm_card("PCH");
+    params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+    if(params == NULL) {
+        adev->cardc = get_pcm_card("sofhdadsp");
         params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+        if (params == NULL) {
+            adev->cardc = get_pcm_card("Dummy");
+            params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+        }
     }
 
-    ALOGI("PCM capture card selected = %d, \n", adev->card);
+    ALOGI("PCM capture card selected = %d, \n", adev->cardc);
 
     in = (struct stream_in *)calloc(1, sizeof(struct stream_in));
     if (!in) {
