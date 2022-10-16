@@ -251,13 +251,13 @@ static int get_pcm_card(const char* name)
 
         written = readlink(id_filepath, number_filepath, sizeof(number_filepath));
         if (written < 0) {
-            ALOGE("Sound card %s does not exist - setting default", name);
-                return 0;
+            ALOGE("Sound card %s does not exist\n", name);
+            return -1;
         } else if (written >= (ssize_t)sizeof(id_filepath)) {
-            ALOGE("Sound card %s name is too long - setting default", name);
-            return 0;
+            ALOGE("Sound card %s name is too long - setting default \n", name);
+            return -1;
         }
-
+        ALOGI("Sound card %s exists\n", name);
         return atoi(number_filepath + 4);
 }
 
@@ -1064,13 +1064,22 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 
     int ret;
 
-    params = pcm_params_get(PCM_CARD_DEFAULT, PCM_DEVICE, PCM_OUT);
-
-    if(params != NULL) {
-       adev->card = PCM_CARD_DEFAULT;
-    } else {
-        adev->card = get_pcm_card("Dummy");
+    adev->card = get_pcm_card("PCH");
+    if (adev->card != -1)
         params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+    else {
+        adev->card = get_pcm_card("Intel");
+        if (adev->card != -1)
+            params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+	else {
+            adev->card = get_pcm_card("sofhdadsp");
+            if (adev->card != -1)
+                params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+            else {
+                adev->card = get_pcm_card("Dummy");
+                params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+            }
+        }
     }
 
     ALOGI("PCM playback card selected = %d, \n", adev->card);
@@ -1327,16 +1336,25 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 
     *stream_in = NULL;
 
-    params = pcm_params_get(PCM_CARD_DEFAULT, PCM_DEVICE, PCM_IN);
-
-    if(params != NULL) {
-        adev->cardc = PCM_CARD_DEFAULT;
-    } else {
-        adev->cardc = get_pcm_card("Dummy");
+    adev->cardc = get_pcm_card("PCH");
+    if (adev->cardc != -1)
         params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+    else {
+        adev->cardc = get_pcm_card("Intel");
+        if (adev->cardc != -1)
+            params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+	else {
+            adev->cardc = get_pcm_card("sofhdadsp");
+            if (adev->cardc != -1)
+                params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+            else {
+                adev->cardc = get_pcm_card("Dummy");
+                params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+            }
+        }
     }
 
-    ALOGI("PCM capture card selected = %d, \n", adev->card);
+    ALOGI("PCM capture card selected = %d, \n", adev->cardc);
 
     in = (struct stream_in *)calloc(1, sizeof(struct stream_in));
     if (!in) {
@@ -1478,7 +1496,15 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->hw_device.dump = adev_dump;
     adev->hw_device.get_microphones = adev_get_microphones;
 
-    snprintf(mixer_path,PATH_MAX,"/vendor/etc/mixer_paths_%d.xml", card);
+    card = get_pcm_card("PCH");
+    if (card == -1 )
+       card = get_pcm_card("Intel");
+    if (card == -1 )
+       card = get_pcm_card("sofhdadsp");
+    if (card == -1 )
+       card = get_pcm_card("Dummy");
+
+    snprintf(mixer_path,PATH_MAX,"/vendor/etc/mixer_paths_0.xml");
     adev->ar = audio_route_init(card, mixer_path);
     if (!adev->ar) {
         ALOGE("%s: Failed to init audio route controls for card %d, aborting.",
