@@ -684,6 +684,7 @@ static int adev_open_output_stream(struct audio_hw_device *hw_dev,
 
     if(out->adev != NULL && is_bt_call_active(out->adev) == 1) {
         ALOGW("%s : bt_call_active, won't allow other outputs",__func__);
+        device_unlock(out->adev);
         free(out);
         *stream_out = NULL;
         return -EINVAL;
@@ -725,7 +726,6 @@ static int adev_open_output_stream(struct audio_hw_device *hw_dev,
         } else {
             proxy_config.format = profile_get_default_format(out->profile);
             config->format = audio_format_from_pcm_format(proxy_config.format);
-            ret = -EINVAL;
         }
     }
 
@@ -1581,6 +1581,7 @@ int looper(struct audio_device *adev, struct pcm_config *in_config, struct pcm_c
             int ret = create_resampler(in_config->rate /*src rate*/, out_config->rate /*dst rate*/, out_config->channels /*channels*/,
                         RESAMPLER_QUALITY_DEFAULT, NULL, &resampler);
             if (ret != 0) {
+		release_resampler(resampler);
                 resampler = NULL;
                 ALOGE("%s : Failure to create upsampler %d", __func__, ret);
                 free(buf_out);
@@ -1685,6 +1686,7 @@ int looper(struct audio_device *adev, struct pcm_config *in_config, struct pcm_c
 #endif
 
 
+    release_resampler(resampler);
     free(buf_out);
     free(buf_in);
     free(buf_remapped);
