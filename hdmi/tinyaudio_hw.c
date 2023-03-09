@@ -430,7 +430,7 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
 }
 static int parse_hdmi_device_number()
 {
-    struct mixer *mixer;
+    struct mixer *mixer = NULL;
     int card = 0;
     struct mixer_ctl *ctl;
     enum mixer_ctl_type mixer_type;
@@ -441,7 +441,7 @@ static int parse_hdmi_device_number()
     ALOGV("%s enter",__func__);
     card = get_card_number_by_name("PCH"); 
     mixer = mixer_open(card);
-    if (!mixer) {
+    if (mixer == NULL) {
         ALOGE(" Failed to open mixer\n");
         return -1;
     }
@@ -461,6 +461,7 @@ static int parse_hdmi_device_number()
                    if (mixer_ctl_get_value(ctl, j)) {
                        ALOGV(" status of device %d is ON", i);
                        ALOGV("%s exit", __func__);
+                       mixer_close(mixer);
                        return i;
                    }
                    break;
@@ -471,6 +472,7 @@ static int parse_hdmi_device_number()
            }   
        }
     }
+    mixer_close(mixer);
     ALOGV("%s exit",__func__);
     return DEFAULT_DEVICE;
 }
