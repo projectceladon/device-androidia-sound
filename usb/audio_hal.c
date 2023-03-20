@@ -762,7 +762,7 @@ static int adev_open_output_stream(struct audio_hw_device *hw_dev,
     // if they differ, choose the "actual" number of channels *closest* to the "logical".
     // and store THAT in proxy_config.channels
     proxy_config.channels = profile_get_closest_channel_count(out->profile, out->hal_channel_count);
-    proxy_prepare(&out->proxy, out->profile, &proxy_config);
+    proxy_prepare(&out->proxy, out->profile, &proxy_config, false);
 
     /* TODO The retry mechanism isn't implemented in AudioPolicyManager/AudioFlinger
      * So clear any errors that may have occurred above.
@@ -1218,7 +1218,7 @@ static int adev_open_input_stream(struct audio_hw_device *hw_dev,
         // and store THAT in proxy_config.channels
         proxy_config.channels =
                 profile_get_closest_channel_count(in->profile, in->hal_channel_count);
-        ret = proxy_prepare(&in->proxy, in->profile, &proxy_config);
+        ret = proxy_prepare(&in->proxy, in->profile, &proxy_config, false);
         if (ret == 0) {
             in->standby = true;
 
@@ -1423,7 +1423,7 @@ int prepare_loopback_parameters(struct audio_device *adev){
     get_device_info(adev, &adev->usb_in_profile, &config_usb, adev->usbcard, 0, PCM_IN);
     ALOGV("%s : config_usb in rate %d channels %d format %d", __func__, config_usb.rate, config_usb.channels, config_usb.format);
 
-    proxy_ret = proxy_prepare(&adev->usb_in_proxy, &adev->usb_in_profile, &config_usb);
+    proxy_ret = proxy_prepare(&adev->usb_in_proxy, &adev->usb_in_profile, &config_usb, false);
 
     if(proxy_ret != 0) {
         ALOGV("%s : usb in proxy_prepare failure : Error : %d", __func__, proxy_ret);
@@ -1447,7 +1447,7 @@ int prepare_loopback_parameters(struct audio_device *adev){
     get_device_info(adev, &adev->bt_out_profile, &config_bt, adev->btcard, 0, PCM_OUT);
     ALOGV("%s : config_bt out rate %d channels %d format %d", __func__, config_bt.rate, config_bt.channels, config_bt.format);
 
-    proxy_ret = proxy_prepare(&adev->bt_out_proxy, &adev->bt_out_profile, &config_bt);
+    proxy_ret = proxy_prepare(&adev->bt_out_proxy, &adev->bt_out_profile, &config_bt, false);
 
     if(proxy_ret != 0) {
         ALOGE("%s : bt_sco out proxy_prepare failure : Error : %d", __func__, proxy_ret);
@@ -1480,7 +1480,7 @@ int prepare_loopback_parameters(struct audio_device *adev){
 
     ALOGD("%s : config_bt in rate %d channels %d format %d",__func__, config_bt.rate, config_bt.channels, config_bt.format);
 
-    proxy_ret = proxy_prepare(&adev->bt_in_proxy, &adev->bt_in_profile, &config_bt);
+    proxy_ret = proxy_prepare(&adev->bt_in_proxy, &adev->bt_in_profile, &config_bt, false);
 
     if(proxy_ret != 0) {
         ALOGE("%s : bt_sco in proxy_prepare done : Error : %d",__func__, proxy_ret);
@@ -1504,7 +1504,7 @@ int prepare_loopback_parameters(struct audio_device *adev){
     get_device_info(adev, &adev->usb_out_profile, &config_usb, adev->usbcard, 0, PCM_OUT);
     ALOGD("%s : config_usb out rate %d channels %d format %d",__func__, config_usb.rate, config_usb.channels, config_usb.format);
 
-    proxy_ret = proxy_prepare(&adev->usb_out_proxy, &adev->usb_out_profile, &config_usb);
+    proxy_ret = proxy_prepare(&adev->usb_out_proxy, &adev->usb_out_profile, &config_usb, false);
 
     if(proxy_ret != 0) {
         ALOGE("%s : usb_out proxy_prepare failed : Error : %d",__func__, proxy_ret);
