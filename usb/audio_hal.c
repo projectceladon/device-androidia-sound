@@ -709,7 +709,6 @@ static int adev_open_output_stream(struct audio_hw_device *hw_dev,
         proxy_config.rate = config->sample_rate;
     } else {
         proxy_config.rate = config->sample_rate = profile_get_default_sample_rate(out->profile);
-        ret = -EINVAL;
     }
 
     out->adev->device_sample_rate = config->sample_rate;
