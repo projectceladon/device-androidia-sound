@@ -1021,11 +1021,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
         memset(buffer, 0, bytes);
 
 exit:
+    pthread_mutex_unlock(&in->lock);
     if (ret < 0)
         usleep(bytes * 1000000 / audio_stream_in_frame_size(stream) /
                in_get_sample_rate(&stream->common));
 
-    pthread_mutex_unlock(&in->lock);
     return bytes;
 }
 
