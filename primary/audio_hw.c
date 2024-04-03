@@ -1082,11 +1082,14 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         }
     }
 
+    if (!params) {
+        adev->card = get_pcm_card("Dummy");
+        params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
+        if (!params)
+            return -ENOSYS;
+    }
+
     ALOGI("PCM playback card selected = %d, \n", adev->card);
-
-    if (!params)
-        return -ENOSYS;
-
     out = (struct stream_out *)calloc(1, sizeof(struct stream_out));
     if (!out) {
         free(params);
@@ -1353,7 +1356,12 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
             }
         }
     }
-
+    if(!params) {
+        adev->cardc = get_pcm_card("Dummy");
+        params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
+        if (!params)
+            return -ENOSYS;
+    }
     ALOGI("PCM capture card selected = %d, \n", adev->cardc);
 
     in = (struct stream_in *)calloc(1, sizeof(struct stream_in));
