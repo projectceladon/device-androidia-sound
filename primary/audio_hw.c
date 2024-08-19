@@ -18,7 +18,8 @@
 
 #include <audio_hw.h>
 #include <audio_dbg.h>
-
+#include <config.h>
+#include <utils.h>
 
 static void select_devices(struct audio_device *adev)
 {
@@ -702,32 +703,35 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     struct audio_device *adev = (struct audio_device *)dev;
     struct stream_out *out;
     struct pcm_params *params;
+    struct pcm_config *pcm_config = NULL;
+    bool isDummy = false;
+    bool isVirtioCard = false;
+    int card = -1, device = -1;
+    int ret = -1;
 
-    int ret;
-
-    adev->card = get_pcm_card("PCH");
-    if (adev->card != -1)
-        params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-    else {
-        adev->card = get_pcm_card("Intel");
-        if (adev->card != -1)
-            params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-	else {
-            adev->card = get_pcm_card("sofhdadsp");
-            if (adev->card != -1)
-                params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-            else {
-                adev->card = get_pcm_card("Dummy");
-                params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-            }
+    struct stream_config *sc  = audio_hal_config_get(adev->hal_config, address, 1 /*playback*/);
+    if (!sc || !sc->card_name || sc->device_id < 0) {
+        isDummy = true;
+        ALOGW("%s:%s : Incorrect parameters in the hal configuration, use dummy sound card instead", __func__, address);
+    } else {
+        card = get_pcm_card(sc->card_name);
+        device = sc->device_id;
+        pcm_config = &sc->pcm_config;
+        params = pcm_params_get(card, device, PCM_OUT);
+        if (card < 0 || !params) {
+            isDummy = true;
+            ALOGW("%s:%s : hw param get fail, request card=%d, device=%d", __func__, address, card, device);
         }
+        free(params);
+        isVirtioCard = check_virito_card(card);
     }
 
-    if (!params) {
-        adev->card = get_pcm_card("Dummy");
-        params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-        if (!params)
-            return -ENOSYS;
+    if (isDummy) {
+        card = get_pcm_card("Dummy");
+        device = PCM_DUMMY_DEVICE;
+        if(!pcm_config) {
+            pcm_config = &dummy_pcm_config_out;
+        }
     }
 
     ALOGI("PCM playback card selected = %d, \n", adev->card);

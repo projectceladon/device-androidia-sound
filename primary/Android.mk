@@ -19,9 +19,12 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
+	config.c \
+	utils.c \
 	audio_hw.c
 
 LOCAL_SHARED_LIBRARIES := \
+	libexpat \
 	liblog \
 	libcutils \
 	libaudioutils \

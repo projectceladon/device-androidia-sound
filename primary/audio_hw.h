@@ -54,6 +54,8 @@
 #define SAMPLE_SIZE_IN_BYTES          2
 #define SAMPLE_SIZE_IN_BYTES_STEREO   4
 
+#define PCM_DUMMY_DEVICE 0
+
 // All hash defines - End
 
 //
@@ -112,6 +114,7 @@ struct audio_device {
     bool standby;
     bool mic_mute;
     struct audio_route *ar;
+    void *hal_config;
 
     int card;
     int cardc;
@@ -157,6 +160,15 @@ struct stream_in {
     bool standby;
 
     struct audio_device *dev;
+};
+
+struct pcm_config dummy_pcm_config_out = {
+    .channels = 2,
+    .rate = OUT_SAMPLING_RATE,
+    .period_size = OUT_PERIOD_SIZE,
+    .period_count = OUT_PERIOD_COUNT,
+    .format = PCM_FORMAT_S16_LE,
+    .start_threshold = OUT_PERIOD_SIZE * OUT_PERIOD_COUNT,
 };
 
 // All Struct defines - End
