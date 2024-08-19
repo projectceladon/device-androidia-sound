@@ -1,3 +1,6 @@
+//Copyright (C) 2024 Intel Corporation
+//SPDX-License-Identifier: Apache-2.0
+
 //
 // All hash includes - Start
 //
@@ -385,7 +388,8 @@ static int in_remove_audio_effect(const struct audio_stream *stream __unused,
     return 0;
 }
 
-//int out_write_bt (struct stream_out *out, struct audio_device *adev, const void* buffer, size_t bytes);
+int in_read_bt (struct stream_in *in, struct audio_device *adev, void* buffer, size_t bytes);
+int out_write_bt (struct stream_out *out, struct audio_device *adev, const void* buffer, size_t bytes);
 
 // All Function declarations - End
 

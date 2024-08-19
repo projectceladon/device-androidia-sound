@@ -1,3 +1,6 @@
+//Copyright (C) 2024 Intel Corporation
+//SPDX-License-Identifier: Apache-2.0
+
 /*#define LOG_NDEBUG 0*/
 
 //#define DEBUG_PCM_DUMP
