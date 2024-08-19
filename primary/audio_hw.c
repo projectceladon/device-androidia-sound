@@ -17,22 +17,7 @@
 #define LOG_TAG "audio_hw_primary"
 
 #include <audio_hw.h>
-
-/*#define LOG_NDEBUG 0*/
-
-//#define DEBUG_PCM_DUMP
-
-#ifdef DEBUG_PCM_DUMP
-// To enable dumps, explicitly create "/vendor/dump/" folder and reboot device
-FILE *sco_call_write = NULL;
-FILE *sco_call_write_remapped = NULL;
-FILE *sco_call_write_bt = NULL;
-FILE *sco_call_read = NULL;
-FILE *sco_call_read_remapped = NULL;
-FILE *sco_call_read_bt = NULL;
-FILE *out_write_dump = NULL;
-FILE *in_read_dump = NULL;
-#endif
+#include <audio_dbg.h>
 
 struct pcm_config pcm_config_out = {
     .channels = 2,
