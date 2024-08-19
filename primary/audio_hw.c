@@ -979,33 +979,36 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
         config->sample_rate, config->format, popcount(config->channel_mask), flags);
 
     struct audio_device *adev = (struct audio_device *)dev;
-    struct stream_in *in;
-    struct pcm_params *params;
-
+    struct stream_in *in = NULL;
+    struct pcm_params *params = NULL;
+    struct pcm_config *pcm_config = NULL;
+    bool isDummy = false;
+    int card = -1, device = -1;
+    int ret = -1;
     *stream_in = NULL;
 
-    adev->cardc = get_pcm_card("PCH");
-    if (adev->cardc != -1)
-        params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-    else {
-        adev->cardc = get_pcm_card("Intel");
-        if (adev->cardc != -1)
-            params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-	else {
-            adev->cardc = get_pcm_card("sofhdadsp");
-            if (adev->cardc != -1)
-                params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-            else {
-                adev->cardc = get_pcm_card("Dummy");
-                params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-            }
+    struct stream_config *sc = audio_hal_config_get(adev->hal_config, address, 0 /*capture*/);
+    if (!sc || !sc->card_name || sc->device_id < 0) {
+        isDummy = true;
+        ALOGW("%s:%s : Incorrect parameters in the hal configuration, use dummy sound card instead", __func__, address);
+    } else {
+        card = get_pcm_card(sc->card_name);
+        device = sc->device_id;
+        pcm_config = &sc->pcm_config;
+        params = pcm_params_get(card, device, PCM_IN);
+        if (card < 0 || !params) {
+            isDummy = true;
+            ALOGW("%s:%s : hw param get fail, request card=%d, device=%d", __func__, address, card, device);
         }
+
+        free(params);
     }
-    if(!params) {
-        adev->cardc = get_pcm_card("Dummy");
-        params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-        if (!params)
-            return -ENOSYS;
+
+    if (isDummy) {
+        card = get_pcm_card("Dummy");
+        device = PCM_DUMMY_DEVICE;
+
+        pcm_config = &dummy_pcm_config_in;
     }
     ALOGI("PCM capture card selected = %d, \n", adev->cardc);
 

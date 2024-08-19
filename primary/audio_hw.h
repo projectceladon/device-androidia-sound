@@ -171,6 +171,16 @@ struct pcm_config dummy_pcm_config_out = {
     .start_threshold = OUT_PERIOD_SIZE * OUT_PERIOD_COUNT,
 };
 
+struct pcm_config dummy_pcm_config_in = {
+    .channels = 2,
+    .rate = IN_SAMPLING_RATE,
+    .period_size = IN_PERIOD_SIZE,
+    .period_count = IN_PERIOD_COUNT,
+    .format = PCM_FORMAT_S16_LE,
+    .start_threshold = 1,
+    .stop_threshold = (IN_PERIOD_SIZE * IN_PERIOD_COUNT),
+};
+
 // All Struct defines - End
 
 //
