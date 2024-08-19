@@ -1,3 +1,6 @@
+//
+// All hash includes - Start
+//
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -27,8 +30,11 @@
 #include <audio_utils/resampler.h>
 #include <audio_route/audio_route.h>
 
+// All hash includes - End
 
-
+//
+// All hash defines - Start
+//
 #define PCM_CARD 0
 #define PCM_CARD_DEFAULT 0
 #define PCM_DEVICE 0
@@ -48,7 +54,11 @@
 #define SAMPLE_SIZE_IN_BYTES          2
 #define SAMPLE_SIZE_IN_BYTES_STEREO   4
 
+// All hash defines - End
 
+//
+// All Struct defines - Start
+//
 struct pcm_config pcm_config_out = {
     .channels = 2,
     .rate = OUT_SAMPLING_RATE,
@@ -149,9 +159,210 @@ struct stream_in {
     struct audio_device *dev;
 };
 
+// All Struct defines - End
+
+//
+// All Function declarations - Start
+//
 static uint32_t out_get_sample_rate(const struct audio_stream *stream);
 static size_t out_get_buffer_size(const struct audio_stream *stream);
 static audio_format_t out_get_format(const struct audio_stream *stream);
 static uint32_t in_get_sample_rate(const struct audio_stream *stream);
 static size_t in_get_buffer_size(const struct audio_stream *stream);
 static audio_format_t in_get_format(const struct audio_stream *stream);
+
+static unsigned int round_to_16_mult(unsigned int size)
+{
+    return (size + 15) & ~15;   /* 0xFFFFFFF0; */
+}
+
+static uint32_t out_get_sample_rate(const struct audio_stream *stream)
+{
+    struct stream_out *out = (struct stream_out *)stream;
+    ALOGV("%s : rate %d",__func__, out->req_config.sample_rate);
+    return out->req_config.sample_rate;
+}
+
+static int out_set_sample_rate(struct audio_stream *stream __unused, uint32_t rate __unused)
+{
+    ALOGV("out_set_sample_rate: %d", rate);
+    return -ENOSYS;
+}
+
+static size_t out_get_buffer_size(const struct audio_stream *stream)
+{
+    ALOGV("out_get_buffer_size");
+    return pcm_config_out.period_size *
+               audio_stream_out_frame_size((struct audio_stream_out *)stream);
+}
+
+static uint32_t out_get_channels(const struct audio_stream *stream)
+{
+    struct stream_out *out = (struct stream_out *)stream;
+    ALOGV("%s : channels %d",__func__,  popcount(out->req_config.channel_mask));
+    return out->req_config.channel_mask;
+}
+
+static audio_format_t out_get_format(const struct audio_stream *stream)
+{
+    ALOGV("%s",__func__);
+    struct stream_out *out = (struct stream_out *)stream;
+    return out->req_config.format;
+}
+
+static int out_set_format(struct audio_stream *stream __unused, audio_format_t format __unused)
+{
+    return -ENOSYS;
+}
+
+static int out_dump(const struct audio_stream *stream __unused, int fd __unused)
+{
+    ALOGV("out_dump");
+    return 0;
+}
+
+static uint32_t out_get_latency(const struct audio_stream_out *stream __unused)
+{
+    ALOGV("out_get_latency");
+    return (pcm_config_out.period_size * OUT_PERIOD_COUNT * 1000) / pcm_config_out.rate;
+}
+
+static int out_set_volume(struct audio_stream_out *stream __unused, float left __unused,
+                          float right __unused)
+{
+     ALOGV("out_set_volume: Left:%f Right:%f", left, right);
+     return -ENOSYS;
+}
+
+static int out_get_render_position(const struct audio_stream_out *stream,
+                                   uint32_t *dsp_frames)
+{
+    struct stream_out *out = (struct stream_out *)stream;
+    *dsp_frames = out->written;
+    ALOGV("%s : dsp_frames: %d",__func__, *dsp_frames);
+    return 0;
+}
+
+static int out_get_presentation_position(const struct audio_stream_out *stream,
+                                   uint64_t *frames, struct timespec *timestamp)
+{
+    struct stream_out *out = (struct stream_out *)stream;
+    int ret = -1;
+
+    if (out->pcm) {
+        unsigned int avail;
+        if (pcm_get_htimestamp(out->pcm, &avail, timestamp) == 0) {
+            unsigned int kernel_buffer_size = out->pcm_config->period_size * out->pcm_config->period_count;
+            int64_t signed_frames = out->written - kernel_buffer_size + avail;
+            if (signed_frames >= 0) {
+            *frames = signed_frames;
+            ret = 0;
+            }
+        }
+    }
+
+    return ret;
+}
+
+static int out_add_audio_effect(const struct audio_stream *stream __unused, effect_handle_t effect __unused)
+{
+    ALOGV("out_add_audio_effect: %p", effect);
+    return 0;
+}
+
+static int out_remove_audio_effect(const struct audio_stream *stream __unused, effect_handle_t effect __unused)
+{
+    ALOGV("out_remove_audio_effect: %p", effect);
+    return 0;
+}
+
+static int out_get_next_write_timestamp(const struct audio_stream_out *stream __unused,
+                                        int64_t *timestamp __unused)
+{
+    ALOGV("%s",__func__);
+    return -ENOSYS;
+}
+
+static uint32_t in_get_sample_rate(const struct audio_stream *stream)
+{
+    struct stream_in *in = (struct stream_in *)stream;
+    ALOGV("%s : req_config %d",__func__,in->req_config.sample_rate);
+    return in->req_config.sample_rate;
+}
+
+static int in_set_sample_rate(struct audio_stream *stream __unused, uint32_t rate __unused)
+{
+    ALOGV("in_set_sample_rate: %d", rate);
+    return -ENOSYS;
+}
+
+static size_t in_get_buffer_size(const struct audio_stream *stream)
+{
+    struct stream_in *in = (struct stream_in *)stream;
+    size_t size;
+
+    /*
+     * take resampling into account and return the closest majoring
+     * multiple of 16 frames, as audioflinger expects audio buffers to
+     * be a multiple of 16 frames
+     */
+    size = (in->pcm_config->period_size * in_get_sample_rate(stream)) /
+            in->pcm_config->rate;
+    size = ((size + 15) / 16) * 16;
+
+    size *= audio_stream_in_frame_size(&in->stream);
+    ALOGV("%s : buffer_size : %zu",__func__, size);
+    return size;
+}
+
+static uint32_t in_get_channels(const struct audio_stream *stream)
+{
+    struct stream_in *in = (struct stream_in *)stream;
+
+    ALOGV("%s : channels %d",__func__, popcount(in->req_config.channel_mask));
+    return in->req_config.channel_mask;
+}
+
+static audio_format_t in_get_format(const struct audio_stream *stream)
+{
+    struct stream_in *in = (struct stream_in *)stream;
+    ALOGV("%s : req_config format %d",__func__, in->req_config.format);
+    return in->req_config.format;
+}
+
+static int in_set_format(struct audio_stream *stream __unused, audio_format_t format __unused)
+{
+    return -ENOSYS;
+}
+
+static int in_dump(const struct audio_stream *stream __unused, int fd __unused)
+{
+    return 0;
+}
+
+static int in_set_gain(struct audio_stream_in *stream __unused, float gain __unused)
+{
+    return 0;
+}
+
+static uint32_t in_get_input_frames_lost(struct audio_stream_in *stream __unused)
+{
+    return 0;
+}
+
+static int in_add_audio_effect(const struct audio_stream *stream __unused,
+                               effect_handle_t effect __unused)
+{
+    return 0;
+}
+
+static int in_remove_audio_effect(const struct audio_stream *stream __unused,
+                                  effect_handle_t effect __unused)
+{
+    return 0;
+}
+
+
+
+// All Function declarations - End
+
