@@ -61,6 +61,7 @@
 //
 // All Struct defines - Start
 //
+
 struct pcm_config pcm_config_out = {
     .channels = 2,
     .rate = OUT_SAMPLING_RATE,
@@ -384,7 +385,7 @@ static int in_remove_audio_effect(const struct audio_stream *stream __unused,
     return 0;
 }
 
-
+//int out_write_bt (struct stream_out *out, struct audio_device *adev, const void* buffer, size_t bytes);
 
 // All Function declarations - End
 
