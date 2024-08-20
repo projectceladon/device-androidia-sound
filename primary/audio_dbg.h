@@ -1,5 +1,5 @@
-//Copyright (C) 2024 Intel Corporation
-//SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2024 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
 
 /*#define LOG_NDEBUG 0*/
 
@@ -16,4 +16,3 @@ FILE *sco_call_read_bt = NULL;
 FILE *out_write_dump = NULL;
 FILE *in_read_dump = NULL;
 #endif
-
