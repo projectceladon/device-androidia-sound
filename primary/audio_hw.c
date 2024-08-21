@@ -1036,6 +1036,135 @@ static int adev_close(hw_device_t *device)
     return 0;
 }
 
+static int mixer_setting_for_volume()
+{
+    struct mixer *mixer;
+    int card = 0; //assuming the default card 0, need to get this once we have other mixer controls
+    enum mixer_ctl_type mixer_type;
+    unsigned int num_values;
+    unsigned int i,id,j;
+    bool device_status;
+    int volume[2];
+    struct mixer_ctl *vol_ctl1, *vol_ctl2;
+
+    mixer = mixer_open(card);
+    if (!mixer) {
+        ALOGE(" Failed to open mixer\n");
+        return -1;
+    }
+    //TODO: only two mixer controls passed from host, once we have other controls, pick it from xml
+
+    vol_ctl1 = mixer_get_ctl_by_name(mixer, "DAC2 Playback Volume");
+    vol_ctl2 = mixer_get_ctl_by_name(mixer, "DAC3 Playback Volume");
+
+    if (!vol_ctl1 || !vol_ctl2) {
+        ALOGE(": Error opening mixerVolumecontrol ");
+        mixer_close(mixer);
+        return -1;
+    }
+    volume[0] = DEVICE_MAX_VOL;
+    volume[1] = DEVICE_MAX_VOL;
+    ALOGV("Volume left and right %d %d \n",volume[0],volume[1]);
+    //set vol for device 1
+    int retval1 = mixer_ctl_set_array(vol_ctl1, volume, 2);
+    if (retval1 < 0) {
+        ALOGE( ": Err setting volume dB value %x",  volume[0]);
+        mixer_close(mixer);
+        return -1;
+    }
+    //set vol for device 2
+    int retval2 = mixer_ctl_set_array(vol_ctl2, volume, 2);
+    if (retval2 < 0) {
+        ALOGE( ": Err setting volume dB value %x",  volume[0]);
+        mixer_close(mixer);
+        return -1;
+    }
+    ALOGV( ": Successful in set volume");
+    mixer_close(mixer);
+    return 0;
+}
+
+/*audio port config info used for volume */
+static int adev_set_audio_port_config(struct audio_hw_device *dev ,
+                                    const struct audio_port_config *config )
+{
+    int ret = 0;
+    struct audio_device *adev = (struct audio_device *)dev;
+    char *bus_address = calloc(strlen(config->ext.device.address) + 1, sizeof(char));
+    if (!bus_address){
+        ALOGE("%s: free the allocated %s", __func__);
+        free(bus_address);
+        return -ENOMEM;
+    }
+    strncpy(bus_address, config->ext.device.address, strlen(config->ext.device.address));
+    struct stream_out *out = hashmapGet(adev->out_bus_stream_map, bus_address);
+    if (out) {
+        pthread_mutex_lock(&out->lock);
+        int gainIndex = (config->gain.values[0] - out->gain_stage.min_value) /
+            out->gain_stage.step_value;
+        int totalSteps = (out->gain_stage.max_value - out->gain_stage.min_value) /
+            out->gain_stage.step_value;
+        int minDb = (out->gain_stage.min_value - VOL_DEFAULT_OFFSET) / 100;
+        int maxDb = (out->gain_stage.max_value - VOL_DEFAULT_OFFSET) / 100;
+
+        // curve: 10^((minDb + (maxDb - minDb) * gainIndex / totalSteps) / 20)
+        // 2x10, where 10 comes from the log 10 conversion from power ratios,
+        // which are the square (2) of amplitude
+        out->amplitude_ratio = pow(10,
+                (minDb + (maxDb - minDb) * (gainIndex / (float)totalSteps)) / 20);
+        pthread_mutex_unlock(&out->lock);
+        ALOGD("%s: set audio gain: %f on %s",
+                __func__, out->amplitude_ratio, bus_address);
+    } else {
+        ALOGE("%s: can not find output stream by bus_address:%s", __func__, bus_address);
+        ret = -EINVAL;
+    }
+    if (bus_address) {
+        ALOGE("%s: free the allocated %s", __func__);
+        free(bus_address);
+        return -ENOMEM;
+    }
+
+    return ret;
+}
+
+static int adev_create_audio_patch(struct audio_hw_device *dev __unused,
+          unsigned int num_sources __unused,
+          const struct audio_port_config *sources __unused,
+          unsigned int num_sinks __unused,
+          const struct audio_port_config *sinks __unused,
+          audio_patch_handle_t *handle __unused) {
+#if 0
+      struct audio_device *audio_dev = (struct audio_device *)dev;
+      for (int i = 0; i < num_sources; i++) {
+          ALOGD("%s: source[%d] type=%d address=%s", __func__, i, sources[i].type,
+                  sources[i].type == AUDIO_PORT_TYPE_DEVICE
+                  ? sources[i].ext.device.address
+                  : "");
+      }
+      for (int i = 0; i < num_sinks; i++) {
+          ALOGD("%s: sink[%d] type=%d address=%s", __func__, i, sinks[i].type,
+                  sinks[i].type == AUDIO_PORT_TYPE_DEVICE ? sinks[i].ext.device.address
+                  : "N/A");
+      }
+      if (num_sources == 1 && num_sinks == 1 &&
+              sources[0].type == AUDIO_PORT_TYPE_DEVICE &&
+              sinks[0].type == AUDIO_PORT_TYPE_DEVICE) {
+          pthread_mutex_lock(&audio_dev->lock);
+          audio_dev->last_patch_id += 1;
+          pthread_mutex_unlock(&audio_dev->lock);
+          *handle = audio_dev->last_patch_id;
+      }
+#endif
+      return 0;
+}
+
+static int adev_release_audio_patch(struct audio_hw_device *dev  __unused,
+          audio_patch_handle_t handle) {
+    ALOGD("%s: handle: %d", __func__, handle);
+    return 0;
+}
+
 static int adev_open(const hw_module_t* module, const char* name,
                      hw_device_t** device)
 {
@@ -1109,6 +1238,8 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->out_needs_standby = false;
 
     *device = &adev->hw_device.common;
+
+    mixer_setting_for_volume();
 
 // CLK target codec only works with sample_rate 48000, identify the target and update default pcm_config.rate if needed.
     char product[PROPERTY_VALUE_MAX] = "cel_kbl";

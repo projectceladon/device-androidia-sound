@@ -16,6 +16,7 @@
 #include <cutils/hashmap.h>
 #include <cutils/properties.h>
 #include <cutils/str_parms.h>
+#include <math.h>
 #include <log/log.h>
 
 #include <safe_mem_lib.h>
@@ -51,6 +52,7 @@
 #define IN_PERIOD_MS 10
 #define IN_PERIOD_COUNT 4
 #define IN_SAMPLING_RATE 48000
+#define DEVICE_MAX_VOL  200
 
 #define AUDIO_PARAMETER_HFP_ENABLE "hfp_enable"
 #define AUDIO_PARAMETER_BT_SCO "BT_SCO"
@@ -62,6 +64,12 @@
 
 #define BOARD_NAME_MAX 128
 #define INPUT_BUFFER_MILLISECONDS  20
+
+#define VOL_DEFAULT_MIN_VALUE        -3200
+#define VOL_DEFAULT_MAX_VALUE        600
+#define VOL_DEFAULT_STEP_VALUE       100
+#define VOL_DEFAULT_GAIN             0.5
+#define VOL_DEFAULT_OFFSET           VOL_DEFAULT_MAX_VALUE
 
 // All hash defines - End
 
