@@ -142,6 +142,12 @@ struct audio_device {
   Hashmap *out_bus_stream_map;  // Extended field. Constant after init
 };
 
+enum output_channel_enable {
+  LEFT_CHANNEL = 1,
+  RIGHT_CHANNEL = 1 << 1,
+  BOTH_CHANNELS = LEFT_CHANNEL | RIGHT_CHANNEL
+};
+
 struct stream_out {
   struct audio_stream_out stream;
 
@@ -153,6 +159,21 @@ struct stream_out {
   bool standby;
   uint64_t written;
   struct audio_device *dev;
+  struct audio_route *ar;
+  char *bus_address;
+  int card;
+  int device;
+  struct resampler_itfe *resampler;
+
+  enum output_channel_enable enabled_channels;  // Constant after init
+  float amplitude_ratio;             // Protected by this->lock
+  struct audio_gain gain_stage;      // Constant after init
+  bool apply_sw_volume;
+
+  struct pcm_config *stream_config;
+  int stream_card;
+  int stream_device;
+  bool stream_virtio_card;
 };
 
 struct stream_in {
@@ -164,8 +185,18 @@ struct stream_in {
   struct audio_config req_config;
   bool unavailable;
   bool standby;
-
+  uint64_t frames_read;
   struct audio_device *dev;
+  struct audio_route *ar;
+  char *bus_address;
+  int card;
+  int device;
+  struct resampler_itfe *resampler;
+
+  struct pcm_config *stream_config;
+  int stream_card;
+  int stream_device;
+
 };
 
 struct pcm_config dummy_pcm_config_out = {
@@ -198,6 +229,10 @@ static audio_format_t out_get_format(const struct audio_stream *stream);
 static uint32_t in_get_sample_rate(const struct audio_stream *stream);
 static size_t in_get_buffer_size(const struct audio_stream *stream);
 static audio_format_t in_get_format(const struct audio_stream *stream);
+static void adev_close_output_stream(struct audio_hw_device *dev,
+                                     struct audio_stream_out *stream);
+static void adev_close_input_stream(struct audio_hw_device *dev,
+                                   struct audio_stream_in *stream);
 
 static unsigned int round_to_16_mult(unsigned int size) {
   return (size + 15) & ~15; /* 0xFFFFFFF0; */

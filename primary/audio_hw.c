@@ -640,6 +640,34 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->dev = adev;
     out->standby = true;
     out->unavailable = false;
+    out->written = 0;
+    out->stream_config = pcm_config;
+    out->stream_card = card;
+    out->stream_device = device;
+    out->stream_virtio_card = isVirtioCard;
+    out->bus_address = NULL;
+    out->ar = NULL;
+    out->enabled_channels = BOTH_CHANNELS;
+
+    if (sc && sc->mixer_path && sc->mixer_path->card_name && sc->mixer_path->mixer_path) {
+        card = get_pcm_card(sc->mixer_path->card_name);
+        if(card < 0) {
+            ALOGE("%s: Failed to get audio route card %s", __func__,
+            sc->mixer_path->card_name);
+
+            adev_close_output_stream(dev, (struct audio_stream_out *)out);
+            return -ENOSYS;
+        }
+
+        out->ar = audio_route_init(card, sc->mixer_path->mixer_path);
+        if (!out->ar) {
+            ALOGE("%s: Failed to init audio route controls, address %s, card %s",
+            __func__, address, sc->mixer_path->card_name);
+
+            adev_close_output_stream(dev, (struct audio_stream_out *)out);
+            return -ENOSYS;
+        }
+    }
 
     config->format = out_get_format(&out->stream.common);
     config->channel_mask = out_get_channels(&out->stream.common);
@@ -911,6 +939,32 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
 //       make a copy of requested config to feed it back if requested.
     memcpy(&in->req_config, config, sizeof(struct audio_config));
+
+    in->bus_address = NULL;
+    in->ar = NULL;
+    in->stream_config = pcm_config;
+    in->stream_card = card;
+    in->stream_device = device;
+
+    if (sc && sc->mixer_path && sc->mixer_path->card_name && sc->mixer_path->mixer_path) {
+        card = get_pcm_card(sc->mixer_path->card_name);
+        if(card < 0) {
+            ALOGE("%s: Failed to get audio route card %s.", __func__,
+            sc->mixer_path->card_name);
+
+            adev_close_input_stream(dev, (struct audio_stream_in *)in);
+            return -ENOSYS;
+        }
+
+        in->ar = audio_route_init(card, sc->mixer_path->mixer_path);
+        if (!in->ar) {
+            ALOGE("%s: Failed to init audio route controls, address %s, card %s.",
+            __func__, address, sc->mixer_path->card_name);
+
+            adev_close_input_stream(dev, (struct audio_stream_in *)in);
+            return -ENOSYS;
+        }
+    }
 
     *stream_in = &in->stream;
 
