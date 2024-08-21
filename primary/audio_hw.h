@@ -13,6 +13,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <cutils/hashmap.h>
 #include <cutils/properties.h>
 #include <cutils/str_parms.h>
 #include <log/log.h>
@@ -58,6 +59,9 @@
 #define SAMPLE_SIZE_IN_BYTES_STEREO 4
 
 #define PCM_DUMMY_DEVICE 0
+
+#define BOARD_NAME_MAX 128
+#define INPUT_BUFFER_MILLISECONDS  20
 
 // All hash defines - End
 
@@ -134,6 +138,8 @@ struct audio_device {
   struct resampler_itfe *voip_in_resampler;
   struct resampler_itfe *voip_out_resampler;
   // BT SCO VoIP Call]
+  
+  Hashmap *out_bus_stream_map;  // Extended field. Constant after init
 };
 
 struct stream_out {

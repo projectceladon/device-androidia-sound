@@ -537,6 +537,27 @@ exit:
     return bytes;
 }
 
+/* copied from libcutils/str_parms.c */
+static bool str_eq(void *key_a, void *key_b) {
+    return !strcmp((const char *)key_a, (const char *)key_b);
+}
+
+/**
+ * use djb hash unless we find it inadequate.
+ * copied from libcutils/str_parms.c
+ */
+#ifdef __clang__
+__attribute__((no_sanitize("integer")))
+#endif
+static int str_hash_fn(void *str) {
+    uint32_t hash = 5381;
+    char *p;
+    for (p = str; p && *p; p++) {
+        hash = ((hash << 5) + hash) + *p;
+    }
+    return (int)hash;
+}
+
 static int adev_open_output_stream(struct audio_hw_device *dev,
                                    audio_io_handle_t handle __unused,
                                    audio_devices_t devices __unused,
@@ -969,6 +990,8 @@ static int adev_open(const hw_module_t* module, const char* name,
     struct audio_device *adev;
     int card = 0;
     char mixer_path[PATH_MAX];
+    char config_path[PATH_MAX];
+    char board_name[BOARD_NAME_MAX];
 
     if (strcmp(name, AUDIO_HARDWARE_INTERFACE) != 0)
         return -EINVAL;
@@ -1000,24 +1023,36 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->hw_device.dump = adev_dump;
     adev->hw_device.get_microphones = adev_get_microphones;
 
-    card = get_pcm_card("PCH");
-    if (card == -1 )
-       card = get_pcm_card("Intel");
-    if (card == -1 )
-       card = get_pcm_card("sofhdadsp");
-    if (card == -1 )
-       card = get_pcm_card("Dummy");
-
-    snprintf(mixer_path,PATH_MAX,"/vendor/etc/mixer_paths_0.xml");
-    adev->ar = audio_route_init(card, mixer_path);
-    if (!adev->ar) {
-        ALOGE("%s: Failed to init audio route controls for card %d, aborting.",
-            __func__, card);
-        goto error;
+    adev->hal_config = audio_hal_config_init();
+    if (!adev->hal_config) {
+        ALOGE("%s: audio hal config init fail", __func__);
+        free(adev);
+        return -EINVAL;
     }
+    // Initialize the bus address to output stream map
+    adev->out_bus_stream_map = hashmapCreate(5, str_hash_fn, str_eq);
+    // Set max volume to the devices
+    memset(config_path, 0, PATH_MAX);
+    memset(board_name, 0, BOARD_NAME_MAX);
+    property_get("vendor.audio_hal.board", board_name, NULL);
+    if (strlen(board_name) > 0) {
+        snprintf(config_path, PATH_MAX, "/vendor/etc/audio_hal_configuration_%s.xml", board_name);
+        if (access(config_path, F_OK) == -1) {
+            memset(config_path, 0, PATH_MAX);
+        }
+    }
+
+    if (strlen(config_path) == 0) {
+        snprintf(config_path, PATH_MAX, "/vendor/etc/audio_hal_configuration.xml");
+    }
+
+    ALOGI("%s: audio hal config file path is %s", __func__, config_path);
+    audio_hal_config_load_from_xml(adev->hal_config, config_path);
     
     adev->out_device = AUDIO_DEVICE_OUT_SPEAKER;
     adev->in_device = AUDIO_DEVICE_IN_BUILTIN_MIC & ~AUDIO_DEVICE_BIT_IN;
+    adev->in_needs_standby = false;
+    adev->out_needs_standby = false;
 
     *device = &adev->hw_device.common;
 
