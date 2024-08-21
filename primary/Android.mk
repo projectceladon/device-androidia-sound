@@ -19,9 +19,12 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
+	config.c \
+	utils.c \
 	audio_hw.c
 
 LOCAL_SHARED_LIBRARIES := \
+	libexpat \
 	liblog \
 	libcutils \
 	libaudioutils \
@@ -32,6 +35,7 @@ LOCAL_SHARED_LIBRARIES := \
 
 LOCAL_C_INCLUDES += \
 	external/tinyalsa/include \
+	$(LOCAL_PATH)/include \
 	$(call include-path-for, audio-utils) \
 	$(call include-path-for, audio-route) \
 	$(call include-path-for, audio-effects)

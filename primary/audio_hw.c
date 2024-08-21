@@ -15,176 +15,11 @@
  */
 
 #define LOG_TAG "audio_hw_primary"
-/*#define LOG_NDEBUG 0*/
 
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <unistd.h>
-
-#include <log/log.h>
-#include <cutils/properties.h>
-#include <cutils/str_parms.h>
-
-#include <safe_mem_lib.h>
-#include <safe_str_lib.h>
-
-#include <hardware/audio.h>
-#include <hardware/hardware.h>
-
-#include <system/audio.h>
-
-#include <linux/ioctl.h>
-#include <sound/asound.h>
-#include <tinyalsa/asoundlib.h>
-
-#include <audio_utils/channels.h>
-#include <audio_utils/resampler.h>
-#include <audio_route/audio_route.h>
-
-#define PCM_CARD 0
-#define PCM_CARD_DEFAULT 0
-#define PCM_DEVICE 0
-
-#define OUT_PERIOD_SIZE 1024
-#define OUT_PERIOD_COUNT 4
-#define OUT_SAMPLING_RATE 48000
-
-#define IN_PERIOD_SIZE 1024 //default period size
-#define IN_PERIOD_MS 10
-#define IN_PERIOD_COUNT 4
-#define IN_SAMPLING_RATE 48000
-
-#define AUDIO_PARAMETER_HFP_ENABLE   "hfp_enable"
-#define AUDIO_PARAMETER_BT_SCO       "BT_SCO"
-#define AUDIO_BT_DRIVER_NAME         "btaudiosource"
-#define SAMPLE_SIZE_IN_BYTES          2
-#define SAMPLE_SIZE_IN_BYTES_STEREO   4
-
-//#define DEBUG_PCM_DUMP
-
-#ifdef DEBUG_PCM_DUMP
-// To enable dumps, explicitly create "/vendor/dump/" folder and reboot device
-FILE *sco_call_write = NULL;
-FILE *sco_call_write_remapped = NULL;
-FILE *sco_call_write_bt = NULL;
-FILE *sco_call_read = NULL;
-FILE *sco_call_read_remapped = NULL;
-FILE *sco_call_read_bt = NULL;
-FILE *out_write_dump = NULL;
-FILE *in_read_dump = NULL;
-#endif
-
-struct pcm_config pcm_config_out = {
-    .channels = 2,
-    .rate = OUT_SAMPLING_RATE,
-    .period_size = OUT_PERIOD_SIZE,
-    .period_count = OUT_PERIOD_COUNT,
-    .format = PCM_FORMAT_S16_LE,
-    .start_threshold = OUT_PERIOD_SIZE * OUT_PERIOD_COUNT,
-};
-
-struct pcm_config pcm_config_in = {
-    .channels = 2,
-    .rate = IN_SAMPLING_RATE,
-    .period_size = IN_PERIOD_SIZE,
-    .period_count = IN_PERIOD_COUNT,
-    .format = PCM_FORMAT_S16_LE,
-    .start_threshold = 1,
-    .stop_threshold = (IN_PERIOD_SIZE * IN_PERIOD_COUNT),
-};
-
-//[ BT ALSA Card config
-struct pcm_config bt_out_config = {
-    .channels = 1,
-    .rate = 8000,
-    .period_size = 240,
-    .period_count = 5,
-    .start_threshold = 0,
-    .stop_threshold = 0,
-    .silence_threshold = 0,
-    .silence_size = 0,
-    .avail_min = 0
-};
-
-struct pcm_config bt_in_config = {
-    .channels = 1,
-    .rate = 8000,
-    .period_size = 240,
-    .period_count = 5,
-    .start_threshold = 0,
-    .stop_threshold = 0,
-    .silence_threshold = 0,
-    .silence_size = 0,
-    .avail_min = 0
-};
-
-struct audio_device {
-    struct audio_hw_device hw_device;
-
-    pthread_mutex_t lock; /* see note below on mutex acquisition order */
-    unsigned int out_device;
-    unsigned int in_device;
-    bool standby;
-    bool mic_mute;
-    struct audio_route *ar;
-    
-    int card;
-    int cardc;
-    struct stream_out *active_out;
-    struct stream_in *active_in;
-
-//[BT-HFP Voice Call
-    bool is_hfp_call_active;
-//BT-HFP Voice Call]
-
-    bool in_needs_standby;
-    bool out_needs_standby;
-
-//[BT SCO VoIP Call
-    bool in_sco_voip_call;
-    int bt_card;
-    struct resampler_itfe *voip_in_resampler;
-    struct resampler_itfe *voip_out_resampler;
-//BT SCO VoIP Call]
-};
-
-struct stream_out {
-    struct audio_stream_out stream;
-
-    pthread_mutex_t lock; /* see note below on mutex acquisition order */
-    struct pcm *pcm;
-    struct pcm_config *pcm_config;
-    struct audio_config req_config;
-    bool unavailable;
-    bool standby;
-    uint64_t written;
-    struct audio_device *dev;
-};
-
-struct stream_in {
-    struct audio_stream_in stream;
-
-    pthread_mutex_t lock; /* see note below on mutex acquisition order */
-    struct pcm *pcm;
-    struct pcm_config *pcm_config;
-    struct audio_config req_config;
-    bool unavailable;
-    bool standby;
-
-    struct audio_device *dev;
-};
-
-static uint32_t out_get_sample_rate(const struct audio_stream *stream);
-static size_t out_get_buffer_size(const struct audio_stream *stream);
-static audio_format_t out_get_format(const struct audio_stream *stream);
-static uint32_t in_get_sample_rate(const struct audio_stream *stream);
-static size_t in_get_buffer_size(const struct audio_stream *stream);
-static audio_format_t in_get_format(const struct audio_stream *stream);
+#include <audio_hw.h>
+#include <audio_dbg.h>
+#include <config.h>
+#include <utils.h>
 
 static void select_devices(struct audio_device *adev)
 {
@@ -263,11 +98,6 @@ static int get_pcm_card(const char* name)
 
 void update_bt_card(struct audio_device *adev){
     adev->bt_card = get_pcm_card(AUDIO_BT_DRIVER_NAME); //update driver name if changed from BT side.
-}
-
-static unsigned int round_to_16_mult(unsigned int size)
-{
-    return (size + 15) & ~15;   /* 0xFFFFFFF0; */
 }
 
 /* must be called with hw device and output stream mutexes locked */
@@ -356,45 +186,6 @@ static int start_input_stream(struct stream_in *in)
 
 /* API functions */
 
-static uint32_t out_get_sample_rate(const struct audio_stream *stream)
-{
-    struct stream_out *out = (struct stream_out *)stream;
-    ALOGV("%s : rate %d",__func__, out->req_config.sample_rate);
-    return out->req_config.sample_rate;
-}
-
-static int out_set_sample_rate(struct audio_stream *stream __unused, uint32_t rate __unused)
-{
-    ALOGV("out_set_sample_rate: %d", rate);
-    return -ENOSYS;
-}
-
-static size_t out_get_buffer_size(const struct audio_stream *stream)
-{
-    ALOGV("out_get_buffer_size");
-    return pcm_config_out.period_size *
-               audio_stream_out_frame_size((struct audio_stream_out *)stream);
-}
-
-static uint32_t out_get_channels(const struct audio_stream *stream)
-{
-    struct stream_out *out = (struct stream_out *)stream;
-    ALOGV("%s : channels %d",__func__,  popcount(out->req_config.channel_mask));
-    return out->req_config.channel_mask;
-}
-
-static audio_format_t out_get_format(const struct audio_stream *stream)
-{
-    ALOGV("%s",__func__);
-    struct stream_out *out = (struct stream_out *)stream;
-    return out->req_config.format;
-}
-
-static int out_set_format(struct audio_stream *stream __unused, audio_format_t format __unused)
-{
-    return -ENOSYS;
-}
-
 static int out_standby(struct audio_stream *stream)
 {
     struct stream_out *out = (struct stream_out *)stream;
@@ -406,12 +197,6 @@ static int out_standby(struct audio_stream *stream)
     pthread_mutex_unlock(&out->lock);
     pthread_mutex_unlock(&out->dev->lock);
 
-    return 0;
-}
-
-static int out_dump(const struct audio_stream *stream __unused, int fd __unused)
-{
-    ALOGV("out_dump");
     return 0;
 }
 
@@ -505,19 +290,6 @@ static char *out_get_parameters(const struct audio_stream *stream, const char *k
     return str_parm;
 }
 
-static uint32_t out_get_latency(const struct audio_stream_out *stream __unused)
-{
-    ALOGV("out_get_latency");
-    return (pcm_config_out.period_size * OUT_PERIOD_COUNT * 1000) / pcm_config_out.rate;
-}
-
-static int out_set_volume(struct audio_stream_out *stream __unused, float left __unused,
-                          float right __unused)
-{
-     ALOGV("out_set_volume: Left:%f Right:%f", left, right);
-     return -ENOSYS;
-}
-
 static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
                          size_t bytes)
 {
@@ -560,86 +332,9 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 
 //[BT SCO VoIP Call
     if(adev->in_sco_voip_call) {
-        /* VoIP pcm write in celadon devices goes to bt alsa card */
-        size_t frames_in = round_to_16_mult(out->pcm_config->period_size);
-        size_t frames_out = round_to_16_mult(bt_out_config.period_size);
-        size_t buf_size_out = bt_out_config.channels * frames_out * SAMPLE_SIZE_IN_BYTES;
-        size_t buf_size_in = out->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
-        size_t buf_size_remapped = bt_out_config.channels * frames_in * SAMPLE_SIZE_IN_BYTES;
-        int16_t *buf_out = (int16_t *) malloc (buf_size_out);
-        int16_t *buf_in = (int16_t *) malloc (buf_size_in);
-        int16_t *buf_remapped = (int16_t *) malloc (buf_size_remapped);
-
-        if(adev->voip_out_resampler == NULL) {
-            int ret = create_resampler(out->pcm_config->rate /*src rate*/, bt_out_config.rate /*dst rate*/, bt_out_config.channels/*dst channels*/,
-                            RESAMPLER_QUALITY_DEFAULT, NULL, &(adev->voip_out_resampler));
-            ALOGD("%s : frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
-            ALOGD("%s : to write bytes : %zu", __func__, bytes);
-            ALOGD("%s : size_in %zu size_out %zu size_remapped %zu", __func__, buf_size_in, buf_size_out, buf_size_remapped);
-
-            if (ret != 0) {
-                adev->voip_out_resampler = NULL;
-                ALOGE("%s : Failure to create resampler %d", __func__, ret);
-
-                free(buf_in);
-                free(buf_out);
-                free(buf_remapped);
-                goto exit;
-            } else {
-                ALOGD("%s : voip_out_resampler created rate : [%d -> %d]", __func__, out->pcm_config->rate, bt_out_config.rate);
-            }
-        }
-
-        memset(buf_in, 0, buf_size_in);
-        memset(buf_remapped, 0, buf_size_remapped);
-        memset(buf_out, 0, buf_size_out);
-
-        memcpy_s(buf_in,buf_size_in, buffer, buf_size_in);
-
-#ifdef DEBUG_PCM_DUMP
-        if(sco_call_write != NULL) {
-            fwrite(buf_in, 1, buf_size_in, sco_call_write);
-        } else {
-            ALOGD("%s : sco_call_write was NULL, no dump", __func__);
-        }
-#endif
-
-        adjust_channels(buf_in, out->pcm_config->channels, buf_remapped, bt_out_config.channels, 
-                                        SAMPLE_SIZE_IN_BYTES, buf_size_in);
-
-        //ALOGV("remapping : [%d -> %d]", out->pcm_config->channels, bt_out_config.channels);
-
-#ifdef DEBUG_PCM_DUMP
-        if(sco_call_write_remapped != NULL) {
-            fwrite(buf_remapped, 1, buf_size_remapped, sco_call_write_remapped);
-        } else {
-            ALOGD("%s : sco_call_write_remapped was NULL, no dump", __func__);
-        }
-#endif
-
-        if(adev->voip_out_resampler != NULL) {
-            adev->voip_out_resampler->resample_from_input(adev->voip_out_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
-            //ALOGV("%s : upsampling [%d -> %d]",__func__, out->pcm_config->rate, bt_out_config.rate);
-        }
-
-        ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
-
-        buf_size_out = bt_out_config.channels * frames_out * SAMPLE_SIZE_IN_BYTES;
-        bytes = out->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
-
-#ifdef DEBUG_PCM_DUMP
-        if(sco_call_write_bt != NULL) {
-            fwrite(buf_out, 1, buf_size_out, sco_call_write_bt);
-        } else {
-            ALOGD("%s : sco_call_write was NULL, no dump", __func__);
-        }
-#endif
-
-        ret = pcm_write(out->pcm, buf_out, buf_size_out);
-
-        free(buf_in);
-        free(buf_out);
-        free(buf_remapped);
+        ret = out_write_bt(out, adev, buffer, bytes);
+	if (ret != 0)
+            goto exit;
 //BT SCO VoIP Call]
     } else {
         /* Normal pcm out to primary card */
@@ -676,108 +371,6 @@ exit:
     return bytes;
 }
 
-static int out_get_render_position(const struct audio_stream_out *stream,
-                                   uint32_t *dsp_frames)
-{
-    struct stream_out *out = (struct stream_out *)stream;
-    *dsp_frames = out->written;
-    ALOGV("%s : dsp_frames: %d",__func__, *dsp_frames);
-    return 0;
-}
-
-static int out_get_presentation_position(const struct audio_stream_out *stream,
-                                   uint64_t *frames, struct timespec *timestamp)
-{
-    struct stream_out *out = (struct stream_out *)stream;
-    int ret = -1;
-
-    if (out->pcm) {
-        unsigned int avail;
-        if (pcm_get_htimestamp(out->pcm, &avail, timestamp) == 0) {
-            unsigned int kernel_buffer_size = out->pcm_config->period_size * out->pcm_config->period_count;
-            int64_t signed_frames = out->written - kernel_buffer_size + avail;
-            if (signed_frames >= 0) {
-            *frames = signed_frames;
-            ret = 0;
-            }
-        }
-    }
-
-    return ret;
-}
-
-static int out_add_audio_effect(const struct audio_stream *stream __unused, effect_handle_t effect __unused)
-{
-    ALOGV("out_add_audio_effect: %p", effect);
-    return 0;
-}
-
-static int out_remove_audio_effect(const struct audio_stream *stream __unused, effect_handle_t effect __unused)
-{
-    ALOGV("out_remove_audio_effect: %p", effect);
-    return 0;
-}
-
-static int out_get_next_write_timestamp(const struct audio_stream_out *stream __unused,
-                                        int64_t *timestamp __unused)
-{
-    ALOGV("%s",__func__);
-    return -ENOSYS;
-}
-
-/** audio_stream_in implementation **/
-static uint32_t in_get_sample_rate(const struct audio_stream *stream)
-{
-    struct stream_in *in = (struct stream_in *)stream;
-    ALOGV("%s : req_config %d",__func__,in->req_config.sample_rate);
-    return in->req_config.sample_rate;
-}
-
-static int in_set_sample_rate(struct audio_stream *stream __unused, uint32_t rate __unused)
-{
-    ALOGV("in_set_sample_rate: %d", rate);
-    return -ENOSYS;
-}
-
-static size_t in_get_buffer_size(const struct audio_stream *stream)
-{
-    struct stream_in *in = (struct stream_in *)stream;
-    size_t size;
-
-    /*
-     * take resampling into account and return the closest majoring
-     * multiple of 16 frames, as audioflinger expects audio buffers to
-     * be a multiple of 16 frames
-     */
-    size = (in->pcm_config->period_size * in_get_sample_rate(stream)) /
-            in->pcm_config->rate;
-    size = ((size + 15) / 16) * 16;
-
-    size *= audio_stream_in_frame_size(&in->stream);
-    ALOGV("%s : buffer_size : %zu",__func__, size);
-    return size;
-}
-
-static uint32_t in_get_channels(const struct audio_stream *stream)
-{
-    struct stream_in *in = (struct stream_in *)stream;
-
-    ALOGV("%s : channels %d",__func__, popcount(in->req_config.channel_mask));
-    return in->req_config.channel_mask;
-}
-
-static audio_format_t in_get_format(const struct audio_stream *stream)
-{
-    struct stream_in *in = (struct stream_in *)stream;
-    ALOGV("%s : req_config format %d",__func__, in->req_config.format);
-    return in->req_config.format;
-}
-
-static int in_set_format(struct audio_stream *stream __unused, audio_format_t format __unused)
-{
-    return -ENOSYS;
-}
-
 static int in_standby(struct audio_stream *stream)
 {
     struct stream_in *in = (struct stream_in *)stream;
@@ -788,11 +381,6 @@ static int in_standby(struct audio_stream *stream)
     pthread_mutex_unlock(&in->lock);
     pthread_mutex_unlock(&in->dev->lock);
 
-    return 0;
-}
-
-static int in_dump(const struct audio_stream *stream __unused, int fd __unused)
-{
     return 0;
 }
 
@@ -875,11 +463,6 @@ static char * in_get_parameters(const struct audio_stream *stream,
     return str_parm;
 }
 
-static int in_set_gain(struct audio_stream_in *stream __unused, float gain __unused)
-{
-    return 0;
-}
-
 static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
                        size_t bytes)
 {
@@ -919,84 +502,9 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
 
 //[BT SCO VoIP Call
     if(adev->in_sco_voip_call) {
-        /* VoIP pcm read from bt alsa card */
-        size_t frames_out = round_to_16_mult(in->pcm_config->period_size);
-        size_t frames_in = round_to_16_mult(bt_in_config.period_size);
-        size_t buf_size_out = in->pcm_config->channels * frames_out * SAMPLE_SIZE_IN_BYTES;
-        size_t buf_size_in = bt_in_config.channels * frames_in * SAMPLE_SIZE_IN_BYTES;
-        size_t buf_size_remapped = in->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
-        int16_t *buf_out = (int16_t *) malloc (buf_size_out);
-        int16_t *buf_in = (int16_t *) malloc (buf_size_in);
-        int16_t *buf_remapped = (int16_t *) malloc (buf_size_remapped);
-
-        if(adev->voip_in_resampler == NULL) {
-            int ret = create_resampler(bt_in_config.rate /*src rate*/, in->pcm_config->rate /*dst rate*/, in->pcm_config->channels/*dst channels*/,
-                        RESAMPLER_QUALITY_DEFAULT, NULL, &(adev->voip_in_resampler));
-            ALOGV("%s : bytes_requested : %zu", __func__, bytes);
-            ALOGV("%s : frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
-            ALOGD("%s : size_in %zu size_out %zu size_remapped %zu", __func__, buf_size_in, buf_size_out, buf_size_remapped);
-            if (ret != 0) {
-                adev->voip_in_resampler = NULL;
-                ALOGE("%s : Failure to create resampler %d", __func__, ret);
-
-                free(buf_in);
-                free(buf_out);
-                free(buf_remapped);
-                goto exit;
-            } else {
-                ALOGD("%s : voip_in_resampler created rate : [%d -> %d]", __func__, bt_in_config.rate, in->pcm_config->rate);
-            }
-        }
-
-        memset(buf_in, 0, buf_size_in);
-        memset(buf_remapped, 0, buf_size_remapped);
-        memset(buf_out, 0, buf_size_out);
-
-        ret = pcm_read(in->pcm, buf_in, buf_size_in);
-
-#ifdef DEBUG_PCM_DUMP
-        if(sco_call_read != NULL) {
-            fwrite(buf_in, 1, buf_size_in, sco_call_read);
-        } else {
-            ALOGD("%s : sco_call_read was NULL, no dump", __func__);
-        }
-#endif
-        adjust_channels(buf_in, bt_in_config.channels, buf_remapped, in->pcm_config->channels, 
-                                        SAMPLE_SIZE_IN_BYTES, buf_size_in);
-
-        //ALOGV("%s : remapping : [%d -> %d]", __func__, bt_in_config.channels, in->pcm_config->channels);
-
-#ifdef DEBUG_PCM_DUMP
-        if(sco_call_read_remapped != NULL) {
-            fwrite(buf_remapped, 1, buf_size_remapped, sco_call_read_remapped);
-        } else {
-            ALOGD("%s : sco_call_read_remapped was NULL, no dump", __func__);
-        }
-#endif
-
-        if(adev->voip_in_resampler != NULL) {
-            adev->voip_in_resampler->resample_from_input(adev->voip_in_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
-            //ALOGV("%s : upsampling [%d -> %d]",__func__, bt_in_config.rate, in->pcm_config->rate);
-        }
-
-        ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
-
-        buf_size_out = in->pcm_config->channels * frames_out * SAMPLE_SIZE_IN_BYTES;
-        bytes = buf_size_out;
-
-#ifdef DEBUG_PCM_DUMP
-        if(sco_call_read_bt != NULL) {
-            fwrite(buf_out, 1, buf_size_out, sco_call_read_bt);
-        } else {
-            ALOGD("%s : sco_call_read_bt was NULL, no dump", __func__);
-        }
-#endif
-
-        memcpy_s(buffer,buf_size_out, buf_out, buf_size_out);
-
-        free(buf_in);
-        free(buf_out);
-        free(buf_remapped);
+        ret = in_read_bt(in, adev, buffer, bytes);
+	if (ret != 0)
+            goto exit;
 //BT SCO VoIP Call]
     } else {
         /* pcm read for primary card */
@@ -1029,23 +537,26 @@ exit:
     return bytes;
 }
 
-static uint32_t in_get_input_frames_lost(struct audio_stream_in *stream __unused)
-{
-    return 0;
+/* copied from libcutils/str_parms.c */
+static bool str_eq(void *key_a, void *key_b) {
+    return !strcmp((const char *)key_a, (const char *)key_b);
 }
 
-static int in_add_audio_effect(const struct audio_stream *stream __unused,
-                               effect_handle_t effect __unused)
-{
-    return 0;
+/**
+ * use djb hash unless we find it inadequate.
+ * copied from libcutils/str_parms.c
+ */
+#ifdef __clang__
+__attribute__((no_sanitize("integer")))
+#endif
+static int str_hash_fn(void *str) {
+    uint32_t hash = 5381;
+    char *p;
+    for (p = str; p && *p; p++) {
+        hash = ((hash << 5) + hash) + *p;
+    }
+    return (int)hash;
 }
-
-static int in_remove_audio_effect(const struct audio_stream *stream __unused,
-                                  effect_handle_t effect __unused)
-{
-    return 0;
-}
-
 
 static int adev_open_output_stream(struct audio_hw_device *dev,
                                    audio_io_handle_t handle __unused,
@@ -1061,32 +572,35 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     struct audio_device *adev = (struct audio_device *)dev;
     struct stream_out *out;
     struct pcm_params *params;
+    struct pcm_config *pcm_config = NULL;
+    bool isDummy = false;
+    bool isVirtioCard = false;
+    int card = -1, device = -1;
+    int ret = -1;
 
-    int ret;
-
-    adev->card = get_pcm_card("PCH");
-    if (adev->card != -1)
-        params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-    else {
-        adev->card = get_pcm_card("Intel");
-        if (adev->card != -1)
-            params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-	else {
-            adev->card = get_pcm_card("sofhdadsp");
-            if (adev->card != -1)
-                params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-            else {
-                adev->card = get_pcm_card("Dummy");
-                params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-            }
+    struct stream_config *sc  = audio_hal_config_get(adev->hal_config, address, 1 /*playback*/);
+    if (!sc || !sc->card_name || sc->device_id < 0) {
+        isDummy = true;
+        ALOGW("%s:%s : Incorrect parameters in the hal configuration, use dummy sound card instead", __func__, address);
+    } else {
+        card = get_pcm_card(sc->card_name);
+        device = sc->device_id;
+        pcm_config = &sc->pcm_config;
+        params = pcm_params_get(card, device, PCM_OUT);
+        if (card < 0 || !params) {
+            isDummy = true;
+            ALOGW("%s:%s : hw param get fail, request card=%d, device=%d", __func__, address, card, device);
         }
+        free(params);
+        isVirtioCard = check_virito_card(card);
     }
 
-    if (!params) {
-        adev->card = get_pcm_card("Dummy");
-        params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-        if (!params)
-            return -ENOSYS;
+    if (isDummy) {
+        card = get_pcm_card("Dummy");
+        device = PCM_DUMMY_DEVICE;
+        if(!pcm_config) {
+            pcm_config = &dummy_pcm_config_out;
+        }
     }
 
     ALOGI("PCM playback card selected = %d, \n", adev->card);
@@ -1126,6 +640,34 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->dev = adev;
     out->standby = true;
     out->unavailable = false;
+    out->written = 0;
+    out->stream_config = pcm_config;
+    out->stream_card = card;
+    out->stream_device = device;
+    out->stream_virtio_card = isVirtioCard;
+    out->bus_address = NULL;
+    out->ar = NULL;
+    out->enabled_channels = BOTH_CHANNELS;
+
+    if (sc && sc->mixer_path && sc->mixer_path->card_name && sc->mixer_path->mixer_path) {
+        card = get_pcm_card(sc->mixer_path->card_name);
+        if(card < 0) {
+            ALOGE("%s: Failed to get audio route card %s", __func__,
+            sc->mixer_path->card_name);
+
+            adev_close_output_stream(dev, (struct audio_stream_out *)out);
+            return -ENOSYS;
+        }
+
+        out->ar = audio_route_init(card, sc->mixer_path->mixer_path);
+        if (!out->ar) {
+            ALOGE("%s: Failed to init audio route controls, address %s, card %s",
+            __func__, address, sc->mixer_path->card_name);
+
+            adev_close_output_stream(dev, (struct audio_stream_out *)out);
+            return -ENOSYS;
+        }
+    }
 
     config->format = out_get_format(&out->stream.common);
     config->channel_mask = out_get_channels(&out->stream.common);
@@ -1334,33 +876,36 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
         config->sample_rate, config->format, popcount(config->channel_mask), flags);
 
     struct audio_device *adev = (struct audio_device *)dev;
-    struct stream_in *in;
-    struct pcm_params *params;
-
+    struct stream_in *in = NULL;
+    struct pcm_params *params = NULL;
+    struct pcm_config *pcm_config = NULL;
+    bool isDummy = false;
+    int card = -1, device = -1;
+    int ret = -1;
     *stream_in = NULL;
 
-    adev->cardc = get_pcm_card("PCH");
-    if (adev->cardc != -1)
-        params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-    else {
-        adev->cardc = get_pcm_card("Intel");
-        if (adev->cardc != -1)
-            params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-	else {
-            adev->cardc = get_pcm_card("sofhdadsp");
-            if (adev->cardc != -1)
-                params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-            else {
-                adev->cardc = get_pcm_card("Dummy");
-                params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-            }
+    struct stream_config *sc = audio_hal_config_get(adev->hal_config, address, 0 /*capture*/);
+    if (!sc || !sc->card_name || sc->device_id < 0) {
+        isDummy = true;
+        ALOGW("%s:%s : Incorrect parameters in the hal configuration, use dummy sound card instead", __func__, address);
+    } else {
+        card = get_pcm_card(sc->card_name);
+        device = sc->device_id;
+        pcm_config = &sc->pcm_config;
+        params = pcm_params_get(card, device, PCM_IN);
+        if (card < 0 || !params) {
+            isDummy = true;
+            ALOGW("%s:%s : hw param get fail, request card=%d, device=%d", __func__, address, card, device);
         }
+
+        free(params);
     }
-    if(!params) {
-        adev->cardc = get_pcm_card("Dummy");
-        params = pcm_params_get(adev->cardc, PCM_DEVICE, PCM_IN);
-        if (!params)
-            return -ENOSYS;
+
+    if (isDummy) {
+        card = get_pcm_card("Dummy");
+        device = PCM_DUMMY_DEVICE;
+
+        pcm_config = &dummy_pcm_config_in;
     }
     ALOGI("PCM capture card selected = %d, \n", adev->cardc);
 
@@ -1394,6 +939,32 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 // VTS : Device doesn't support mono channel or sample_rate other than 48000
 //       make a copy of requested config to feed it back if requested.
     memcpy(&in->req_config, config, sizeof(struct audio_config));
+
+    in->bus_address = NULL;
+    in->ar = NULL;
+    in->stream_config = pcm_config;
+    in->stream_card = card;
+    in->stream_device = device;
+
+    if (sc && sc->mixer_path && sc->mixer_path->card_name && sc->mixer_path->mixer_path) {
+        card = get_pcm_card(sc->mixer_path->card_name);
+        if(card < 0) {
+            ALOGE("%s: Failed to get audio route card %s.", __func__,
+            sc->mixer_path->card_name);
+
+            adev_close_input_stream(dev, (struct audio_stream_in *)in);
+            return -ENOSYS;
+        }
+
+        in->ar = audio_route_init(card, sc->mixer_path->mixer_path);
+        if (!in->ar) {
+            ALOGE("%s: Failed to init audio route controls, address %s, card %s.",
+            __func__, address, sc->mixer_path->card_name);
+
+            adev_close_input_stream(dev, (struct audio_stream_in *)in);
+            return -ENOSYS;
+        }
+    }
 
     *stream_in = &in->stream;
 
@@ -1465,6 +1036,135 @@ static int adev_close(hw_device_t *device)
     return 0;
 }
 
+static int mixer_setting_for_volume()
+{
+    struct mixer *mixer;
+    int card = 0; //assuming the default card 0, need to get this once we have other mixer controls
+    enum mixer_ctl_type mixer_type;
+    unsigned int num_values;
+    unsigned int i,id,j;
+    bool device_status;
+    int volume[2];
+    struct mixer_ctl *vol_ctl1, *vol_ctl2;
+
+    mixer = mixer_open(card);
+    if (!mixer) {
+        ALOGE(" Failed to open mixer\n");
+        return -1;
+    }
+    //TODO: only two mixer controls passed from host, once we have other controls, pick it from xml
+
+    vol_ctl1 = mixer_get_ctl_by_name(mixer, "DAC2 Playback Volume");
+    vol_ctl2 = mixer_get_ctl_by_name(mixer, "DAC3 Playback Volume");
+
+    if (!vol_ctl1 || !vol_ctl2) {
+        ALOGE(": Error opening mixerVolumecontrol ");
+        mixer_close(mixer);
+        return -1;
+    }
+    volume[0] = DEVICE_MAX_VOL;
+    volume[1] = DEVICE_MAX_VOL;
+    ALOGV("Volume left and right %d %d \n",volume[0],volume[1]);
+    //set vol for device 1
+    int retval1 = mixer_ctl_set_array(vol_ctl1, volume, 2);
+    if (retval1 < 0) {
+        ALOGE( ": Err setting volume dB value %x",  volume[0]);
+        mixer_close(mixer);
+        return -1;
+    }
+    //set vol for device 2
+    int retval2 = mixer_ctl_set_array(vol_ctl2, volume, 2);
+    if (retval2 < 0) {
+        ALOGE( ": Err setting volume dB value %x",  volume[0]);
+        mixer_close(mixer);
+        return -1;
+    }
+    ALOGV( ": Successful in set volume");
+    mixer_close(mixer);
+    return 0;
+}
+
+/*audio port config info used for volume */
+static int adev_set_audio_port_config(struct audio_hw_device *dev ,
+                                    const struct audio_port_config *config )
+{
+    int ret = 0;
+    struct audio_device *adev = (struct audio_device *)dev;
+    char *bus_address = calloc(strlen(config->ext.device.address) + 1, sizeof(char));
+    if (!bus_address){
+        ALOGE("%s: free the allocated %s", __func__);
+        free(bus_address);
+        return -ENOMEM;
+    }
+    strncpy(bus_address, config->ext.device.address, strlen(config->ext.device.address));
+    struct stream_out *out = hashmapGet(adev->out_bus_stream_map, bus_address);
+    if (out) {
+        pthread_mutex_lock(&out->lock);
+        int gainIndex = (config->gain.values[0] - out->gain_stage.min_value) /
+            out->gain_stage.step_value;
+        int totalSteps = (out->gain_stage.max_value - out->gain_stage.min_value) /
+            out->gain_stage.step_value;
+        int minDb = (out->gain_stage.min_value - VOL_DEFAULT_OFFSET) / 100;
+        int maxDb = (out->gain_stage.max_value - VOL_DEFAULT_OFFSET) / 100;
+
+        // curve: 10^((minDb + (maxDb - minDb) * gainIndex / totalSteps) / 20)
+        // 2x10, where 10 comes from the log 10 conversion from power ratios,
+        // which are the square (2) of amplitude
+        out->amplitude_ratio = pow(10,
+                (minDb + (maxDb - minDb) * (gainIndex / (float)totalSteps)) / 20);
+        pthread_mutex_unlock(&out->lock);
+        ALOGD("%s: set audio gain: %f on %s",
+                __func__, out->amplitude_ratio, bus_address);
+    } else {
+        ALOGE("%s: can not find output stream by bus_address:%s", __func__, bus_address);
+        ret = -EINVAL;
+    }
+    if (bus_address) {
+        ALOGE("%s: free the allocated %s", __func__);
+        free(bus_address);
+        return -ENOMEM;
+    }
+
+    return ret;
+}
+
+static int adev_create_audio_patch(struct audio_hw_device *dev __unused,
+          unsigned int num_sources __unused,
+          const struct audio_port_config *sources __unused,
+          unsigned int num_sinks __unused,
+          const struct audio_port_config *sinks __unused,
+          audio_patch_handle_t *handle __unused) {
+#if 0
+      struct audio_device *audio_dev = (struct audio_device *)dev;
+      for (int i = 0; i < num_sources; i++) {
+          ALOGD("%s: source[%d] type=%d address=%s", __func__, i, sources[i].type,
+                  sources[i].type == AUDIO_PORT_TYPE_DEVICE
+                  ? sources[i].ext.device.address
+                  : "");
+      }
+      for (int i = 0; i < num_sinks; i++) {
+          ALOGD("%s: sink[%d] type=%d address=%s", __func__, i, sinks[i].type,
+                  sinks[i].type == AUDIO_PORT_TYPE_DEVICE ? sinks[i].ext.device.address
+                  : "N/A");
+      }
+      if (num_sources == 1 && num_sinks == 1 &&
+              sources[0].type == AUDIO_PORT_TYPE_DEVICE &&
+              sinks[0].type == AUDIO_PORT_TYPE_DEVICE) {
+          pthread_mutex_lock(&audio_dev->lock);
+          audio_dev->last_patch_id += 1;
+          pthread_mutex_unlock(&audio_dev->lock);
+          *handle = audio_dev->last_patch_id;
+      }
+#endif
+      return 0;
+}
+
+static int adev_release_audio_patch(struct audio_hw_device *dev  __unused,
+          audio_patch_handle_t handle) {
+    ALOGD("%s: handle: %d", __func__, handle);
+    return 0;
+}
+
 static int adev_open(const hw_module_t* module, const char* name,
                      hw_device_t** device)
 {
@@ -1473,6 +1173,8 @@ static int adev_open(const hw_module_t* module, const char* name,
     struct audio_device *adev;
     int card = 0;
     char mixer_path[PATH_MAX];
+    char config_path[PATH_MAX];
+    char board_name[BOARD_NAME_MAX];
 
     if (strcmp(name, AUDIO_HARDWARE_INTERFACE) != 0)
         return -EINVAL;
@@ -1504,26 +1206,40 @@ static int adev_open(const hw_module_t* module, const char* name,
     adev->hw_device.dump = adev_dump;
     adev->hw_device.get_microphones = adev_get_microphones;
 
-    card = get_pcm_card("PCH");
-    if (card == -1 )
-       card = get_pcm_card("Intel");
-    if (card == -1 )
-       card = get_pcm_card("sofhdadsp");
-    if (card == -1 )
-       card = get_pcm_card("Dummy");
-
-    snprintf(mixer_path,PATH_MAX,"/vendor/etc/mixer_paths_0.xml");
-    adev->ar = audio_route_init(card, mixer_path);
-    if (!adev->ar) {
-        ALOGE("%s: Failed to init audio route controls for card %d, aborting.",
-            __func__, card);
-        goto error;
+    adev->hal_config = audio_hal_config_init();
+    if (!adev->hal_config) {
+        ALOGE("%s: audio hal config init fail", __func__);
+        free(adev);
+        return -EINVAL;
     }
+    // Initialize the bus address to output stream map
+    adev->out_bus_stream_map = hashmapCreate(5, str_hash_fn, str_eq);
+    // Set max volume to the devices
+    memset(config_path, 0, PATH_MAX);
+    memset(board_name, 0, BOARD_NAME_MAX);
+    property_get("vendor.audio_hal.board", board_name, NULL);
+    if (strlen(board_name) > 0) {
+        snprintf(config_path, PATH_MAX, "/vendor/etc/audio_hal_configuration_%s.xml", board_name);
+        if (access(config_path, F_OK) == -1) {
+            memset(config_path, 0, PATH_MAX);
+        }
+    }
+
+    if (strlen(config_path) == 0) {
+        snprintf(config_path, PATH_MAX, "/vendor/etc/audio_hal_configuration.xml");
+    }
+
+    ALOGI("%s: audio hal config file path is %s", __func__, config_path);
+    audio_hal_config_load_from_xml(adev->hal_config, config_path);
     
     adev->out_device = AUDIO_DEVICE_OUT_SPEAKER;
     adev->in_device = AUDIO_DEVICE_IN_BUILTIN_MIC & ~AUDIO_DEVICE_BIT_IN;
+    adev->in_needs_standby = false;
+    adev->out_needs_standby = false;
 
     *device = &adev->hw_device.common;
+
+    mixer_setting_for_volume();
 
 // CLK target codec only works with sample_rate 48000, identify the target and update default pcm_config.rate if needed.
     char product[PROPERTY_VALUE_MAX] = "cel_kbl";
@@ -1592,3 +1308,175 @@ struct audio_module HAL_MODULE_INFO_SYM = {
         .methods = &hal_module_methods,
     },
 };
+
+/* VoIP pcm write in celadon devices goes to bt alsa card */
+int out_write_bt (struct stream_out *out, struct audio_device *adev, const void* buffer,
+                         size_t bytes)
+{
+        int ret = 0;
+        size_t frames_in = round_to_16_mult(out->pcm_config->period_size);
+        size_t frames_out = round_to_16_mult(bt_out_config.period_size);
+        size_t buf_size_out = bt_out_config.channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_in = out->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_remapped = bt_out_config.channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        int16_t *buf_out = (int16_t *) malloc (buf_size_out);
+        int16_t *buf_in = (int16_t *) malloc (buf_size_in);
+        int16_t *buf_remapped = (int16_t *) malloc (buf_size_remapped);
+
+        if(adev->voip_out_resampler == NULL) {
+            int ret = create_resampler(out->pcm_config->rate /*src rate*/, bt_out_config.rate /*dst rate*/, bt_out_config.channels/*dst channels*/,
+                            RESAMPLER_QUALITY_DEFAULT, NULL, &(adev->voip_out_resampler));
+            ALOGD("%s : frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+            ALOGD("%s : to write bytes : %zu", __func__, bytes);
+            ALOGD("%s : size_in %zu size_out %zu size_remapped %zu", __func__, buf_size_in, buf_size_out, buf_size_remapped);
+
+            if (ret != 0) {
+                adev->voip_out_resampler = NULL;
+                ALOGE("%s : Failure to create resampler %d", __func__, ret);
+
+                free(buf_in);
+                free(buf_out);
+                free(buf_remapped);
+            } else {
+                ALOGD("%s : voip_out_resampler created rate : [%d -> %d]", __func__, out->pcm_config->rate, bt_out_config.rate);
+            }
+        }
+
+        memset(buf_in, 0, buf_size_in);
+        memset(buf_remapped, 0, buf_size_remapped);
+        memset(buf_out, 0, buf_size_out);
+
+        memcpy_s(buf_in,buf_size_in, buffer, buf_size_in);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_write != NULL) {
+            fwrite(buf_in, 1, buf_size_in, sco_call_write);
+        } else {
+            ALOGD("%s : sco_call_write was NULL, no dump", __func__);
+        }
+#endif
+
+        adjust_channels(buf_in, out->pcm_config->channels, buf_remapped, bt_out_config.channels,
+                                        SAMPLE_SIZE_IN_BYTES, buf_size_in);
+
+        //ALOGV("remapping : [%d -> %d]", out->pcm_config->channels, bt_out_config.channels);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_write_remapped != NULL) {
+            fwrite(buf_remapped, 1, buf_size_remapped, sco_call_write_remapped);
+        } else {
+            ALOGD("%s : sco_call_write_remapped was NULL, no dump", __func__);
+        }
+#endif
+
+        if(adev->voip_out_resampler != NULL) {
+            adev->voip_out_resampler->resample_from_input(adev->voip_out_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
+            //ALOGV("%s : upsampling [%d -> %d]",__func__, out->pcm_config->rate, bt_out_config.rate);
+        }
+
+        ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+
+        buf_size_out = bt_out_config.channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        bytes = out->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_write_bt != NULL) {
+            fwrite(buf_out, 1, buf_size_out, sco_call_write_bt);
+        } else {
+            ALOGD("%s : sco_call_write was NULL, no dump", __func__);
+        }
+#endif
+
+        ret = pcm_write(out->pcm, buf_out, buf_size_out);
+
+        free(buf_in);
+        free(buf_out);
+        free(buf_remapped);
+
+return ret;
+}
+
+/* VoIP pcm read from bt alsa card */
+int in_read_bt (struct stream_in *in, struct audio_device *adev, void* buffer,
+		size_t bytes)
+{
+	int ret = 0;
+        size_t frames_out = round_to_16_mult(in->pcm_config->period_size);
+        size_t frames_in = round_to_16_mult(bt_in_config.period_size);
+        size_t buf_size_out = in->pcm_config->channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_in = bt_in_config.channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        size_t buf_size_remapped = in->pcm_config->channels * frames_in * SAMPLE_SIZE_IN_BYTES;
+        int16_t *buf_out = (int16_t *) malloc (buf_size_out);
+        int16_t *buf_in = (int16_t *) malloc (buf_size_in);
+        int16_t *buf_remapped = (int16_t *) malloc (buf_size_remapped);
+
+        if(adev->voip_in_resampler == NULL) {
+            int ret = create_resampler(bt_in_config.rate /*src rate*/, in->pcm_config->rate /*dst rate*/, in->pcm_config->channels/*dst channels*/,
+                        RESAMPLER_QUALITY_DEFAULT, NULL, &(adev->voip_in_resampler));
+            ALOGV("%s : bytes_requested : %zu", __func__, bytes);
+            ALOGV("%s : frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+            ALOGD("%s : size_in %zu size_out %zu size_remapped %zu", __func__, buf_size_in, buf_size_out, buf_size_remapped);
+            if (ret != 0) {
+                adev->voip_in_resampler = NULL;
+                ALOGE("%s : Failure to create resampler %d", __func__, ret);
+
+                free(buf_in);
+                free(buf_out);
+                free(buf_remapped);
+            } else {
+                ALOGD("%s : voip_in_resampler created rate : [%d -> %d]", __func__, bt_in_config.rate, in->pcm_config->rate);
+            }
+        }
+
+        memset(buf_in, 0, buf_size_in);
+        memset(buf_remapped, 0, buf_size_remapped);
+        memset(buf_out, 0, buf_size_out);
+
+        ret = pcm_read(in->pcm, buf_in, buf_size_in);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_read != NULL) {
+            fwrite(buf_in, 1, buf_size_in, sco_call_read);
+        } else {
+            ALOGD("%s : sco_call_read was NULL, no dump", __func__);
+        }
+#endif
+        adjust_channels(buf_in, bt_in_config.channels, buf_remapped, in->pcm_config->channels,
+                                        SAMPLE_SIZE_IN_BYTES, buf_size_in);
+
+        //ALOGV("%s : remapping : [%d -> %d]", __func__, bt_in_config.channels, in->pcm_config->channels);
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_read_remapped != NULL) {
+            fwrite(buf_remapped, 1, buf_size_remapped, sco_call_read_remapped);
+        } else {
+            ALOGD("%s : sco_call_read_remapped was NULL, no dump", __func__);
+        }
+#endif
+
+        if(adev->voip_in_resampler != NULL) {
+            adev->voip_in_resampler->resample_from_input(adev->voip_in_resampler, (int16_t *)buf_remapped, (size_t *)&frames_in, (int16_t *) buf_out, (size_t *)&frames_out);
+            //ALOGV("%s : upsampling [%d -> %d]",__func__, bt_in_config.rate, in->pcm_config->rate);
+        }
+
+        ALOGV("%s : modified frames_in %zu frames_out %zu",__func__, frames_in, frames_out);
+
+        buf_size_out = in->pcm_config->channels * frames_out * SAMPLE_SIZE_IN_BYTES;
+        bytes = buf_size_out;
+
+#ifdef DEBUG_PCM_DUMP
+        if(sco_call_read_bt != NULL) {
+            fwrite(buf_out, 1, buf_size_out, sco_call_read_bt);
+        } else {
+            ALOGD("%s : sco_call_read_bt was NULL, no dump", __func__);
+        }
+#endif
+
+        memcpy_s(buffer,buf_size_out, buf_out, buf_size_out);
+
+        free(buf_in);
+        free(buf_out);
+        free(buf_remapped);
+
+return ret;
+}
