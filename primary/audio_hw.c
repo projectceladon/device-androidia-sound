@@ -65,7 +65,7 @@
 #define SAMPLE_SIZE_IN_BYTES          2
 #define SAMPLE_SIZE_IN_BYTES_STEREO   4
 
-//#define DEBUG_PCM_DUMP
+#define DEBUG_PCM_DUMP
 
 #ifdef DEBUG_PCM_DUMP
 // To enable dumps, explicitly create "/vendor/dump/" folder and reboot device
@@ -275,36 +275,29 @@ static int start_output_stream(struct stream_out *out)
 {
     struct audio_device *adev = out->dev;
 
-    ALOGV("%s : config : [rate %d format %d channels %d]",__func__,
-            out->pcm_config->rate, out->pcm_config->format, out->pcm_config->channels);
+    ALOGE("%s : start, pcm_config : [rate %d format %d channels %d]",
+          __func__, out->pcm_config->rate, out->pcm_config->format, out->pcm_config->channels);
 
     if (out->unavailable) {
         ALOGV("start_output_stream: output not available");
         return -ENODEV;
     }
 
-//[BT SCO VoIP Call
-    if(adev->in_sco_voip_call) {
-        ALOGD("%s : sco voip call active", __func__);
+    ALOGI("PCM playback card selected = %d", adev->card);
 
-        ALOGV("%s : opening pcm [%d : %d] for config : [rate %d format %d channels %d]", __func__, adev->bt_card, PCM_DEVICE,
-                bt_out_config.rate, bt_out_config.format, bt_out_config.channels);
-
-        out->pcm = pcm_open(adev->bt_card, PCM_DEVICE /*0*/, PCM_OUT, &bt_out_config);
-//BT SCO VoIP Call]
-    } else {
-        ALOGI("PCM playback card selected = %d, \n", adev->card);
-        out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
-    }
-
+    out->pcm = pcm_open(adev->card, PCM_DEVICE, PCM_OUT | PCM_NORESTART | PCM_MONOTONIC, out->pcm_config);
     if (!out->pcm) {
         ALOGE("pcm_open(out) failed: device not found");
         return -ENODEV;
     } else if (!pcm_is_ready(out->pcm)) {
         ALOGE("pcm_open(out) failed: %s", pcm_get_error(out->pcm));
         pcm_close(out->pcm);
+        out->pcm = NULL;
         out->unavailable = true;
-        return -ENOMEM;
+
+        /* If pcm_open failed because hw doesn't accept the requested format/rate/channels,
+           return -EINVAL so framework can fallback/resample. */
+        return -EINVAL;
     }
 
     adev->active_out = out;
@@ -314,6 +307,7 @@ static int start_output_stream(struct stream_out *out)
 
     return 0;
 }
+
 
 /* must be called with hw device and input stream mutexes locked */
 static int start_input_stream(struct stream_in *in)
@@ -1047,6 +1041,12 @@ static int in_remove_audio_effect(const struct audio_stream *stream __unused,
 }
 
 
+/* helper to get channel count from mask if not available */
+static inline unsigned int channel_count_from_mask(audio_channel_mask_t mask) {
+    /* If audio_channel_count_from_out_mask is available use it. */
+    return popcount(mask);
+}
+
 static int adev_open_output_stream(struct audio_hw_device *dev,
                                    audio_io_handle_t handle __unused,
                                    audio_devices_t devices __unused,
@@ -1059,11 +1059,12 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         config->sample_rate, config->format, popcount(config->channel_mask), flags);
 
     struct audio_device *adev = (struct audio_device *)dev;
-    struct stream_out *out;
-    struct pcm_params *params;
+    struct stream_out *out = NULL;
+    struct pcm_params *params = NULL;
 
-    int ret;
+    int ret = 0;
 
+    /* pick card as you did before */
     adev->card = get_pcm_card("PCH");
     if (adev->card != -1)
         params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
@@ -1071,7 +1072,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         adev->card = get_pcm_card("Intel");
         if (adev->card != -1)
             params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
-	else {
+        else {
             adev->card = get_pcm_card("sofhdadsp");
             if (adev->card != -1)
                 params = pcm_params_get(adev->card, PCM_DEVICE, PCM_OUT);
@@ -1089,13 +1090,15 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
             return -ENOSYS;
     }
 
-    ALOGI("PCM playback card selected = %d, \n", adev->card);
+    ALOGI("PCM playback card selected = %d", adev->card);
+
     out = (struct stream_out *)calloc(1, sizeof(struct stream_out));
     if (!out) {
         free(params);
         return -ENOMEM;
     }
 
+    /* init stream function pointers (same as you had) */
     out->stream.common.get_sample_rate = out_get_sample_rate;
     out->stream.common.set_sample_rate = out_set_sample_rate;
     out->stream.common.get_buffer_size = out_get_buffer_size;
@@ -1115,28 +1118,82 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->stream.get_next_write_timestamp = out_get_next_write_timestamp;
     out->stream.get_presentation_position = out_get_presentation_position;
 
-    out->pcm_config = &pcm_config_out;
+    /* allocate a per-stream pcm_config copy (don't point to global) */
+    out->pcm_config = (struct pcm_config *) calloc(1, sizeof(struct pcm_config));
+    if (!out->pcm_config) {
+        free(out);
+        free(params);
+        return -ENOMEM;
+    }
+    memcpy(out->pcm_config, &pcm_config_out, sizeof(struct pcm_config));
 
-    out->written = 0;
+    /* Apply requested config -> rate / channels / format */
+    if (config && config->sample_rate > 0)
+        out->pcm_config->rate = config->sample_rate;
 
-// VTS : Device doesn't support mono channel or sample_rate other than 48000
-//       make a copy of requested config to feed it back if requested.
-    memcpy(&out->req_config, config, sizeof(struct audio_config));
+    if (config)
+        out->pcm_config->channels = channel_count_from_mask(config->channel_mask);
+
+    /* map audio format to pcm format */
+    if (config && config->format == AUDIO_FORMAT_PCM_FLOAT) {
+        /* many HALs use 32-bit for float path */
+        out->pcm_config->format = PCM_FORMAT_S32_LE;
+    } else {
+        out->pcm_config->format = PCM_FORMAT_S16_LE;
+    }
+
+    /* Save requested config for potential later use */
+    if (config)
+        memcpy(&out->req_config, config, sizeof(struct audio_config));
 
     out->dev = adev;
     out->standby = true;
     out->unavailable = false;
+    out->written = 0;
 
-    config->format = out_get_format(&out->stream.common);
-    config->channel_mask = out_get_channels(&out->stream.common);
-    config->sample_rate = out_get_sample_rate(&out->stream.common);
+    /* --- check hardware support if possible --- */
+    /* If your tinyalsa provides helpers to test params, use them.
+       Otherwise, try to open+close pcm to test support (or accept and let start_output_stream fail). */
 
+    unsigned int min_channels = pcm_params_get_min(params, PCM_PARAM_CHANNELS);
+    unsigned int max_channels = pcm_params_get_max(params, PCM_PARAM_CHANNELS);
+
+    unsigned int min_rate = pcm_params_get_min(params, PCM_PARAM_RATE);
+    unsigned int max_rate = pcm_params_get_max(params, PCM_PARAM_RATE);
+
+
+    /* Simple check: if channels > params->max_channels or rate out of range -> reject */
+    if (out->pcm_config->channels < min_channels ||
+        out->pcm_config->channels > max_channels) {
+        ALOGW("%s: requested channels %u unsupported by hw (min %u max %u)",
+              __func__, out->pcm_config->channels,
+              min_channels, max_channels);
+        free(out->pcm_config);
+        free(out);
+        free(params);
+        return -EINVAL; /* let framework fallback */
+    }
+
+    if (out->pcm_config->rate < min_rate || out->pcm_config->rate > max_rate) {
+        ALOGW("%s: requested rate %u unsupported by hw (min %u max %u)",
+              __func__, out->pcm_config->rate,
+              min_rate, max_rate);
+        free(out->pcm_config);
+        free(out);
+        free(params);
+        return -EINVAL;
+    }
+
+
+    /* register and expose stream to framework only after basic checks */
     *stream_out = &out->stream;
 
+    /* keep params until we no longer need them; free here */
     free(params);
 
     return 0;
 }
+
 
 static void adev_close_output_stream(struct audio_hw_device *dev __unused,
                                      struct audio_stream_out *stream)
